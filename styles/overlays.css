@@ -1,0 +1,61 @@
+/* Block Overlay — shown when daily time limit is reached */
+#dfw-block-overlay {
+  position: fixed !important;
+  top: 0 !important;
+  left: 0 !important;
+  width: 100vw !important;
+  height: 100vh !important;
+  background: #0a0e1a !important;
+  z-index: 2147483647 !important;
+  display: flex !important;
+  flex-direction: column !important;
+  justify-content: center !important;
+  align-items: center !important;
+  font-family: 'Inter', 'Segoe UI', system-ui, sans-serif !important;
+  color: #f8fafc !important;
+}
+
+.dfw-block-icon {
+  font-size: 64px !important;
+  margin-bottom: 24px !important;
+  animation: dfw-pulse 2s ease-in-out infinite !important;
+}
+
+@keyframes dfw-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.7; transform: scale(1.05); }
+}
+
+.dfw-block-title {
+  font-size: 28px !important;
+  font-weight: 700 !important;
+  margin-bottom: 12px !important;
+  letter-spacing: -0.5px !important;
+}
+
+.dfw-block-message {
+  font-size: 16px !important;
+  color: #94a3b8 !important;
+  max-width: 400px !important;
+  text-align: center !important;
+  line-height: 1.6 !important;
+  margin-bottom: 28px !important;
+}
+
+#dfw-dismiss-btn {
+  padding: 12px 28px !important;
+  background: linear-gradient(135deg, #818cf8, #a78bfa) !important;
+  border: none !important;
+  color: white !important;
+  border-radius: 10px !important;
+  cursor: pointer !important;
+  font-size: 14px !important;
+  font-weight: 600 !important;
+  font-family: 'Inter', 'Segoe UI', sans-serif !important;
+  transition: transform 0.2s ease, box-shadow 0.2s ease !important;
+}
+
+#dfw-dismiss-btn:hover {
+  transform: translateY(-1px) !important;
+  box-shadow: 0 4px 20px rgba(129, 140, 248, 0.4) !important;
+}
