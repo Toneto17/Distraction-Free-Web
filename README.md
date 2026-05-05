@@ -106,4 +106,4 @@ Distraction-Free-Web/
 
 ## 📄 License
 
-This project is open source. Feel free to use and modify it.
+This project is licensed under the [GNU General Public License v3.0](LICENSE).
