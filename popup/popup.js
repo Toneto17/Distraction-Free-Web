@@ -65,8 +65,10 @@ function storageSet(obj) {
 document.addEventListener('DOMContentLoaded', () => {
   // ─── Safety check ───
   if (typeof DISTRACTION_RULES === 'undefined') {
-    document.getElementById('sites-container').innerHTML =
-      '<p class="error-msg">Failed to load rules.</p>';
+    const errMsg = document.createElement('p');
+    errMsg.className = 'error-msg';
+    errMsg.textContent = 'Failed to load rules.';
+    document.getElementById('sites-container').appendChild(errMsg);
     return;
   }
 
@@ -93,15 +95,30 @@ function renderUI(prefs, limits, usage) {
     // ── Header ──
     const header = document.createElement('div');
     header.className = 'accordion-header';
-    header.innerHTML = `
-      <div class="accordion-title">
-        <span class="site-dot"></span>
-        ${site.name}
-      </div>
-      <div class="accordion-icon">
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>
-      </div>
-    `;
+    const titleDiv = document.createElement('div');
+    titleDiv.className = 'accordion-title';
+    const dot = document.createElement('span');
+    dot.className = 'site-dot';
+    titleDiv.appendChild(dot);
+    titleDiv.appendChild(document.createTextNode(site.name));
+
+    const iconDiv = document.createElement('div');
+    iconDiv.className = 'accordion-icon';
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.setAttribute('width', '20');
+    svg.setAttribute('height', '20');
+    svg.setAttribute('viewBox', '0 0 24 24');
+    svg.setAttribute('fill', 'none');
+    svg.setAttribute('stroke', 'currentColor');
+    svg.setAttribute('stroke-width', '2');
+    svg.setAttribute('stroke-linecap', 'round');
+    svg.setAttribute('stroke-linejoin', 'round');
+    const svgPath = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    svgPath.setAttribute('d', 'm6 9 6 6 6-6');
+    svg.appendChild(svgPath);
+    iconDiv.appendChild(svg);
+    header.appendChild(titleDiv);
+    header.appendChild(iconDiv);
 
     // ── Content ──
     const content = document.createElement('div');
@@ -121,16 +138,21 @@ function renderUI(prefs, limits, usage) {
       site.features.forEach(f => {
         const row = document.createElement('div');
         row.className = 'feature-item';
-        row.innerHTML = `
-          <span class="feature-title">${f.title}</span>
-          <label class="switch">
-            <input type="checkbox" data-id="${f.id}">
-            <span class="slider"></span>
-          </label>
-        `;
+        const featureTitle = document.createElement('span');
+        featureTitle.className = 'feature-title';
+        featureTitle.textContent = f.title;
+        const switchLabel = document.createElement('label');
+        switchLabel.className = 'switch';
+        const toggle = document.createElement('input');
+        toggle.type = 'checkbox';
+        toggle.dataset.id = f.id;
+        const slider = document.createElement('span');
+        slider.className = 'slider';
+        switchLabel.appendChild(toggle);
+        switchLabel.appendChild(slider);
+        row.appendChild(featureTitle);
+        row.appendChild(switchLabel);
         inner.appendChild(row);
-
-        const toggle = row.querySelector('input');
         toggle.checked = prefs[f.id] !== false;
         toggle.addEventListener('change', e => {
           prefs[f.id] = e.target.checked;
@@ -157,22 +179,39 @@ function renderUI(prefs, limits, usage) {
 
     const lCard = document.createElement('div');
     lCard.className = 'limit-section';
-    lCard.innerHTML = `
-      <div class="limit-info">
-        <span class="limit-time">Used: ${usedMin}m${limitVal > 0 ? ' / ' + limitVal + 'm' : ''}</span>
-      </div>
-      ${limitVal > 0 ? `
-      <div class="progress-track">
-        <div class="progress-bar ${cls}" style="width:${pct}%"></div>
-      </div>` : ''}
-      <div class="limit-controls">
-        <input type="number" class="limit-input" placeholder="0 = off (mins)" value="${limitVal || ''}" min="0">
-        <button class="btn-save" data-domain="${domain}">Save</button>
-      </div>
-    `;
+    const limitInfo = document.createElement('div');
+    limitInfo.className = 'limit-info';
+    const limitTime = document.createElement('span');
+    limitTime.className = 'limit-time';
+    limitTime.textContent = `Used: ${usedMin}m${limitVal > 0 ? ' / ' + limitVal + 'm' : ''}`;
+    limitInfo.appendChild(limitTime);
+    lCard.appendChild(limitInfo);
 
-    const saveBtn = lCard.querySelector('.btn-save');
-    const input   = lCard.querySelector('.limit-input');
+    if (limitVal > 0) {
+      const progressTrack = document.createElement('div');
+      progressTrack.className = 'progress-track';
+      const progressBar = document.createElement('div');
+      progressBar.className = cls ? `progress-bar ${cls}` : 'progress-bar';
+      progressBar.style.width = `${pct}%`;
+      progressTrack.appendChild(progressBar);
+      lCard.appendChild(progressTrack);
+    }
+
+    const limitControls = document.createElement('div');
+    limitControls.className = 'limit-controls';
+    const input = document.createElement('input');
+    input.type = 'number';
+    input.className = 'limit-input';
+    input.placeholder = '0 = off (mins)';
+    if (limitVal) input.value = limitVal;
+    input.min = '0';
+    const saveBtn = document.createElement('button');
+    saveBtn.className = 'btn-save';
+    saveBtn.dataset.domain = domain;
+    saveBtn.textContent = 'Save';
+    limitControls.appendChild(input);
+    limitControls.appendChild(saveBtn);
+    lCard.appendChild(limitControls);
 
     saveBtn.addEventListener('click', (e) => {
       e.stopPropagation();
