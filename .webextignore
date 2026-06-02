@@ -1,8 +1,13 @@
-*.zip
-*.xpi
+build.sh
+manifest.chrome.json
 build/
 dist/
 unpacked/
 distraction-free-web.zip
+*.zip
+*.xpi
+*.crx
+*.pem
+.git/
 .DS_Store
 __MACOSX/

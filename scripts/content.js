@@ -1,115 +1,201 @@
-/* ─── Cross-browser API helpers ─── */
-const api = typeof browser !== 'undefined' ? browser : chrome;
+const api = typeof browser !== "undefined" ? browser : chrome;
+const usesPromiseApi = typeof browser !== "undefined";
 
-function storageGet(keys) {
+function storageGet(areaName, keys) {
+  const area = api.storage && api.storage[areaName];
+  if (!area) return Promise.resolve({});
+
+  if (usesPromiseApi) {
+    return area.get(keys).catch(() => {
+      if (areaName === "sync" && api.storage.local) {
+        return api.storage.local.get(keys).catch(() => ({}));
+      }
+      return {};
+    });
+  }
+
   return new Promise((resolve) => {
     try {
-      const result = api.storage.sync.get(keys);
-      if (result && typeof result.then === 'function') {
-        result.then(resolve).catch(() => {
-          api.storage.local.get(keys).then(resolve).catch(() => resolve({}));
-        });
-      } else {
-        api.storage.sync.get(keys, (data) => {
-          if (api.runtime.lastError) {
-            api.storage.local.get(keys, (d) => resolve(d || {}));
-          } else {
-            resolve(data || {});
-          }
-        });
-      }
-    } catch (e) {
+      area.get(keys, (data) => {
+        if (api.runtime.lastError && areaName === "sync" && api.storage.local) {
+          api.storage.local.get(keys, (localData) => resolve(localData || {}));
+          return;
+        }
+        resolve(data || {});
+      });
+    } catch (error) {
       resolve({});
     }
   });
 }
 
-/* ─── State ─── */
-const hostname = window.location.hostname.replace('www.', '');
-const siteRules = typeof DISTRACTION_RULES !== 'undefined' ? DISTRACTION_RULES[hostname] : null;
+function sendRuntimeMessage(message) {
+  try {
+    const result = api.runtime.sendMessage(message);
+    if (result && typeof result.catch === "function") {
+      result.catch(() => {});
+    }
+  } catch (error) {}
+}
+
+function todayKey(date = new Date()) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function isMobileContext() {
+  return /^m\./i.test(window.location.hostname) || window.matchMedia("(max-width: 700px)").matches;
+}
+
+const matchedSite = typeof dfwGetSiteEntryForHost === "function"
+  ? dfwGetSiteEntryForHost(window.location.hostname)
+  : null;
+const siteDomain = matchedSite ? matchedSite.domain : null;
+const siteRules = matchedSite ? matchedSite.site : null;
 let isDismissed = false;
 
-/* ─── Block Overlay ─── */
-function showBlockOverlay() {
+function clearInjectedRules() {
+  const style = document.getElementById("distraction-free-styles");
+  if (style) style.remove();
+
+  const overlay = document.getElementById("dfw-block-overlay");
+  if (overlay) overlay.remove();
+}
+
+function showBlockOverlay(limitMinutes, usedSeconds) {
   if (isDismissed) return;
-  if (document.getElementById('dfw-block-overlay')) return;
-  const overlay = document.createElement('div');
-  overlay.id = 'dfw-block-overlay';
-  overlay.innerHTML = `
-    <div class="dfw-block-icon">⏳</div>
-    <div class="dfw-block-title">Daily Limit Reached</div>
-    <div class="dfw-block-message">You've used all the time you set for this site today. Take a break — you deserve it.</div>
-    <button id="dfw-dismiss-btn">Continue Browsing</button>
-  `;
+  if (document.getElementById("dfw-block-overlay")) return;
+
+  const usedMinutes = Math.floor((usedSeconds || 0) / 60);
+  const overlay = document.createElement("div");
+  const icon = document.createElement("div");
+  const title = document.createElement("div");
+  const message = document.createElement("div");
+  const button = document.createElement("button");
+
+  overlay.id = "dfw-block-overlay";
+  icon.className = "dfw-block-icon";
+  icon.textContent = "Time";
+  title.className = "dfw-block-title";
+  title.textContent = "Daily Limit Reached";
+  message.className = "dfw-block-message";
+  message.textContent = `You've used ${usedMinutes}m of the ${limitMinutes}m you set for this site today.`;
+  button.id = "dfw-dismiss-btn";
+  button.type = "button";
+  button.textContent = "Continue Browsing";
+
+  overlay.appendChild(icon);
+  overlay.appendChild(title);
+  overlay.appendChild(message);
+  overlay.appendChild(button);
   document.documentElement.appendChild(overlay);
 
-  const btn = document.getElementById('dfw-dismiss-btn');
-  if (btn) {
-    btn.addEventListener('click', () => {
-      isDismissed = true;
-      try {
-        api.runtime.sendMessage({ action: "DISMISS_LIMIT", domain: hostname }).catch(() => {});
-      } catch (e) {}
-      overlay.remove();
-    });
-  }
+  button.addEventListener("click", () => {
+    isDismissed = true;
+    sendRuntimeMessage({ action: "DISMISS_LIMIT", domain: siteDomain });
+    overlay.remove();
+  });
 }
 
-/* ─── Message Listener ─── */
 try {
   api.runtime.onMessage.addListener((message) => {
+    if (!message) return;
+
     if (message.action === "LIMIT_REACHED") {
-      if (!isDismissed) {
-        showBlockOverlay();
+      if (message.domain && message.domain !== siteDomain) return;
+      showBlockOverlay(message.limitMinutes, message.usedSeconds);
+    }
+
+    if (message.action === "EXTENSION_STATE_CHANGED") {
+      if (message.enabled === false) {
+        clearInjectedRules();
+        return;
       }
+
+      Promise.all([
+        storageGet("sync", ["settings", "preferences", "limits"]),
+        storageGet("local", ["usageByDate", "usageData"])
+      ]).then(([syncData, localData]) => {
+        processRules(syncData, localData);
+      });
     }
   });
-} catch (e) {}
+} catch (error) {}
 
-/* ─── Main Logic ─── */
-if (siteRules) {
-  storageGet(['preferences', 'limits', 'usageData', 'currentDate']).then((data) => {
-    processRules(data);
-  });
+function getTodayUsage(data) {
+  const usageByDate = data.usageByDate || {};
+  const todayUsage = usageByDate[todayKey()] || {};
+  if (todayUsage[siteDomain] !== undefined) return todayUsage[siteDomain];
+
+  const legacyUsage = data.usageData || {};
+  return legacyUsage[siteDomain] || 0;
 }
 
-function processRules(data) {
-  const userPrefs = data.preferences || {};
-  const limits = data.limits || {};
-  const usageData = data.usageData || {};
+function shouldRedirect(feature) {
+  if (!feature.from || !feature.from.includes(window.location.pathname)) return false;
+  if (window.location.search && !feature.allowQuery) return false;
+  return window.location.pathname !== feature.to;
+}
 
-  // 1. Inject CSS hiding rules
-  let cssString = '';
-  siteRules.features.forEach(feature => {
-    const isActive = userPrefs[feature.id] !== false;
-    if (isActive) {
-      if (feature.type === 'redirect') {
-        if (feature.from.includes(window.location.pathname) && window.location.search === "") {
-          window.location.replace(feature.to);
-        }
-      } else if (feature.selectors) {
-        feature.selectors.forEach(selector => {
-          cssString += `${selector} { display: none !important; visibility: hidden !important; }\n`;
-        });
+function processRules(syncData, localData) {
+  const settings = syncData.settings || {};
+  if (settings.enabled === false) {
+    clearInjectedRules();
+    return;
+  }
+
+  const userPrefs = syncData.preferences || {};
+  const limits = syncData.limits || {};
+  const context = { isMobile: isMobileContext() };
+  let cssString = "";
+
+  siteRules.features.forEach((feature) => {
+    if (!dfwIsFeatureEnabled(feature, userPrefs)) return;
+
+    if (feature.type === "redirect") {
+      if (shouldRedirect(feature)) {
+        window.location.replace(feature.to);
       }
+      return;
     }
+
+    dfwGetFeatureSelectors(feature, context).forEach((selector) => {
+      cssString += `${selector} { display: none !important; visibility: hidden !important; }\n`;
+    });
   });
 
   if (cssString) {
     const injectStyles = () => {
-      if (document.getElementById('distraction-free-styles')) return;
-      const style = document.createElement('style');
-      style.id = 'distraction-free-styles';
+      const existing = document.getElementById("distraction-free-styles");
+      if (existing) {
+        existing.textContent = cssString;
+        return;
+      }
+
+      const style = document.createElement("style");
+      style.id = "distraction-free-styles";
       style.textContent = cssString;
       (document.head || document.documentElement).appendChild(style);
     };
+
     if (document.documentElement) injectStyles();
-    else document.addEventListener('DOMContentLoaded', injectStyles);
+    else document.addEventListener("DOMContentLoaded", injectStyles);
   }
 
-  // 2. Check time limit
-  const today = new Date().toDateString();
-  if (data.currentDate === today && limits[hostname] && usageData[hostname] >= limits[hostname] * 60) {
-    showBlockOverlay();
+  const limitMinutes = limits[siteDomain];
+  const usedSeconds = getTodayUsage(localData);
+  if (limitMinutes && usedSeconds >= limitMinutes * 60) {
+    showBlockOverlay(limitMinutes, usedSeconds);
   }
+}
+
+if (siteRules) {
+  Promise.all([
+    storageGet("sync", ["settings", "preferences", "limits"]),
+    storageGet("local", ["usageByDate", "usageData"])
+  ]).then(([syncData, localData]) => {
+    processRules(syncData, localData);
+  });
 }

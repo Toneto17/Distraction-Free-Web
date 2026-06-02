@@ -2,6 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Distraction Free Web</title>
   <link rel="stylesheet" href="popup.css">
 </head>
@@ -13,15 +14,25 @@
         <h1>Distraction Free</h1>
         <div class="subtitle">Focus on what matters</div>
       </div>
+      <button id="power-toggle-btn" class="btn-power" type="button" aria-pressed="true">
+        On
+      </button>
     </div>
   </header>
 
   <main>
+    <section id="overview-container">
+      <div class="loading-state">Loading...</div>
+    </section>
     <div id="sites-container"></div>
   </main>
 
   <footer>
-    <span>Reload tabs to apply changes</span>
+    <span>Apply changes to this tab</span>
+    <div class="footer-actions">
+      <button id="open-dashboard-btn" class="btn-secondary" type="button">Dashboard</button>
+      <button id="reload-page-btn" class="btn-reload" type="button">Reload Page</button>
+    </div>
   </footer>
 
   <script src="../config/rules.js"></script>
