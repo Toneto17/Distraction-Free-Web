@@ -1,251 +1,527 @@
-/* ─── Cross-browser storage helper ─── */
-function getStorage() {
-  if (typeof browser !== 'undefined' && browser.storage) return browser.storage;
-  if (typeof chrome !== 'undefined' && chrome.storage) return chrome.storage;
-  return null;
-}
+const extApi = typeof browser !== "undefined" ? browser : chrome;
+const usesPromiseApi = typeof browser !== "undefined";
+const UI_LOCALE = "en-US";
 
-function storageGet(keys) {
-  const api = getStorage();
-  if (!api) return Promise.resolve({});
+function storageGet(areaName, keys) {
+  const area = extApi.storage && extApi.storage[areaName];
+  if (!area) return Promise.resolve({});
 
-  // Try sync first, fall back to local
+  if (usesPromiseApi) {
+    return area.get(keys).catch(() => {
+      if (areaName === "sync" && extApi.storage.local) {
+        return extApi.storage.local.get(keys).catch(() => ({}));
+      }
+      return {};
+    });
+  }
+
   return new Promise((resolve) => {
     try {
-      const result = api.sync.get(keys);
-      if (result && typeof result.then === 'function') {
-        // Promise-based (Firefox)
-        result.then(resolve).catch(() => {
-          // sync failed, try local
-          api.local.get(keys).then(resolve).catch(() => resolve({}));
-        });
-      } else {
-        // Callback-based (Chrome)
-        api.sync.get(keys, (data) => {
-          if (chrome.runtime.lastError) {
-            api.local.get(keys, (d) => resolve(d || {}));
-          } else {
-            resolve(data || {});
-          }
-        });
-      }
-    } catch (e) {
+      area.get(keys, (data) => {
+        if (extApi.runtime.lastError && areaName === "sync" && extApi.storage.local) {
+          extApi.storage.local.get(keys, (localData) => resolve(localData || {}));
+          return;
+        }
+        resolve(data || {});
+      });
+    } catch (error) {
       resolve({});
     }
   });
 }
 
-function storageSet(obj) {
-  const api = getStorage();
-  if (!api) return Promise.resolve();
+function storageSet(areaName, obj) {
+  const area = extApi.storage && extApi.storage[areaName];
+  if (!area) return Promise.resolve();
+
+  if (usesPromiseApi) {
+    return area.set(obj).catch(() => {
+      if (areaName === "sync" && extApi.storage.local) {
+        return extApi.storage.local.set(obj).catch(() => {});
+      }
+    });
+  }
 
   return new Promise((resolve) => {
     try {
-      const result = api.sync.set(obj);
-      if (result && typeof result.then === 'function') {
-        result.then(resolve).catch(() => {
-          api.local.set(obj).then(resolve).catch(resolve);
-        });
-      } else {
-        api.sync.set(obj, () => {
-          if (chrome.runtime.lastError) {
-            api.local.set(obj, resolve);
-          } else {
-            resolve();
-          }
-        });
-      }
-    } catch (e) {
+      area.set(obj, () => {
+        if (extApi.runtime.lastError && areaName === "sync" && extApi.storage.local) {
+          extApi.storage.local.set(obj, () => resolve());
+          return;
+        }
+        resolve();
+      });
+    } catch (error) {
       resolve();
     }
   });
 }
 
-/* ─── Main ─── */
-document.addEventListener('DOMContentLoaded', () => {
-  // ─── Safety check ───
-  if (typeof DISTRACTION_RULES === 'undefined') {
-    const errMsg = document.createElement('p');
-    errMsg.className = 'error-msg';
-    errMsg.textContent = 'Failed to load rules.';
-    document.getElementById('sites-container').appendChild(errMsg);
+function tabsQuery(queryInfo) {
+  if (usesPromiseApi) {
+    return extApi.tabs.query(queryInfo).catch(() => []);
+  }
+
+  return new Promise((resolve) => {
+    try {
+      extApi.tabs.query(queryInfo, (tabs) => resolve(tabs || []));
+    } catch (error) {
+      resolve([]);
+    }
+  });
+}
+
+function tabsReload(tabId) {
+  if (tabId === undefined) return Promise.resolve();
+
+  if (usesPromiseApi) {
+    return extApi.tabs.reload(tabId).catch(() => {});
+  }
+
+  return new Promise((resolve) => {
+    try {
+      extApi.tabs.reload(tabId, () => resolve());
+    } catch (error) {
+      resolve();
+    }
+  });
+}
+
+function tabsCreate(createProperties) {
+  if (usesPromiseApi) {
+    return extApi.tabs.create(createProperties).catch(() => undefined);
+  }
+
+  return new Promise((resolve) => {
+    try {
+      extApi.tabs.create(createProperties, tab => resolve(tab));
+    } catch (error) {
+      resolve(undefined);
+    }
+  });
+}
+
+function runtimeSendMessage(message) {
+  try {
+    const result = extApi.runtime.sendMessage(message);
+    if (result && typeof result.catch === "function") {
+      result.catch(() => {});
+    }
+  } catch (error) {}
+}
+
+function tabsSendMessage(tabId, message) {
+  if (tabId === undefined) return Promise.resolve();
+
+  if (usesPromiseApi) {
+    return extApi.tabs.sendMessage(tabId, message).catch(() => {});
+  }
+
+  return new Promise((resolve) => {
+    try {
+      extApi.tabs.sendMessage(tabId, message, () => resolve());
+    } catch (error) {
+      resolve();
+    }
+  });
+}
+
+function todayKey(date = new Date()) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function addDays(date, amount) {
+  const next = new Date(date);
+  next.setDate(next.getDate() + amount);
+  return next;
+}
+
+function formatMinutes(seconds) {
+  const minutes = Math.floor((seconds || 0) / 60);
+  if (minutes < 60) return `${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  const rest = minutes % 60;
+  return rest ? `${hours}h ${rest}m` : `${hours}h`;
+}
+
+function getTodayUsage(localData, syncData) {
+  const usageByDate = localData.usageByDate || {};
+  const todayUsage = usageByDate[todayKey()] || {};
+  if (Object.keys(todayUsage).length > 0) return todayUsage;
+  return localData.usageData || syncData.usageData || {};
+}
+
+function createElement(tag, className, text) {
+  const el = document.createElement(tag);
+  if (className) el.className = className;
+  if (text !== undefined) el.textContent = text;
+  return el;
+}
+
+function siteName(domain) {
+  return DISTRACTION_RULES[domain] ? DISTRACTION_RULES[domain].name : domain;
+}
+
+document.addEventListener("DOMContentLoaded", () => {
+  if (typeof DISTRACTION_RULES === "undefined") {
+    const errMsg = createElement("p", "error-msg", "Failed to load rules.");
+    document.getElementById("sites-container").appendChild(errMsg);
     return;
   }
 
-  // Render immediately with defaults, then update with saved prefs
-  renderUI({}, {}, {});
+  const reloadBtn = document.getElementById("reload-page-btn");
+  if (reloadBtn) {
+    reloadBtn.addEventListener("click", reloadCurrentTab);
+  }
 
-  // Then try loading saved data
-  storageGet(['preferences', 'limits', 'usageData']).then((data) => {
-    if (data && (data.preferences || data.limits || data.usageData)) {
-      renderUI(data.preferences || {}, data.limits || {}, data.usageData || {});
-    }
-  });
+  const dashboardBtn = document.getElementById("open-dashboard-btn");
+  if (dashboardBtn) {
+    dashboardBtn.addEventListener("click", openDashboard);
+  }
+
+  const powerBtn = document.getElementById("power-toggle-btn");
+  if (powerBtn) {
+    powerBtn.addEventListener("click", toggleExtensionEnabled);
+  }
+
+  loadStoredData();
 });
 
-function renderUI(prefs, limits, usage) {
-  const container = document.getElementById('sites-container');
-  container.innerHTML = '';
+function loadStoredData() {
+  Promise.all([
+    storageGet("sync", ["preferences", "limits", "settings", "usageData"]),
+    storageGet("local", ["usageByDate", "usageData"])
+  ]).then(([syncData, localData]) => {
+    renderUI(
+      syncData.preferences || {},
+      syncData.limits || {},
+      localData || {},
+      syncData || {},
+      syncData.settings || {}
+    );
+  });
+}
+
+async function reloadCurrentTab() {
+  const button = document.getElementById("reload-page-btn");
+  if (button) {
+    button.disabled = true;
+    button.textContent = "Reloading";
+  }
+
+  const tabs = await tabsQuery({ active: true, currentWindow: true });
+  if (tabs[0]) {
+    await tabsReload(tabs[0].id);
+  }
+
+  if (button) {
+    button.textContent = tabs[0] ? "Reloaded" : "No Tab";
+    setTimeout(() => {
+      button.disabled = false;
+      button.textContent = "Reload Page";
+    }, 1200);
+  }
+}
+
+function openDashboard() {
+  const url = extApi.runtime.getURL("dashboard/dashboard.html");
+  tabsCreate({ url });
+}
+
+async function toggleExtensionEnabled() {
+  const syncData = await storageGet("sync", ["settings"]);
+  const settings = syncData.settings || {};
+  const nextSettings = { ...settings, enabled: settings.enabled === false };
+  await storageSet("sync", { settings: nextSettings });
+
+  renderPowerState(nextSettings);
+  runtimeSendMessage({
+    action: "SET_EXTENSION_ENABLED",
+    enabled: nextSettings.enabled !== false
+  });
+
+  const tabs = await tabsQuery({ active: true, currentWindow: true });
+  if (tabs[0]) {
+    await tabsSendMessage(tabs[0].id, {
+      action: "EXTENSION_STATE_CHANGED",
+      enabled: nextSettings.enabled !== false
+    });
+  }
+
+  loadStoredData();
+}
+
+function renderPowerState(settings) {
+  const isEnabled = settings.enabled !== false;
+  const button = document.getElementById("power-toggle-btn");
+  document.body.classList.toggle("extension-disabled", !isEnabled);
+
+  if (!button) return;
+  button.textContent = isEnabled ? "On" : "Off";
+  button.setAttribute("aria-pressed", String(isEnabled));
+  button.title = isEnabled ? "Turn extension off" : "Turn extension on";
+}
+
+function renderUI(prefs, limits, localData, syncData, settings = {}) {
+  renderPowerState(settings);
+  const usage = getTodayUsage(localData, syncData);
+  renderOverview(usage, limits, localData.usageByDate || {}, settings);
+  renderSites(prefs, limits, usage);
+}
+
+function renderOverview(usage, limits, usageByDate, settings) {
+  const container = document.getElementById("overview-container");
+  container.innerHTML = "";
+
+  const trackedDomains = Object.keys(usage || {}).filter(domain => usage[domain] > 0);
+  const totalSeconds = trackedDomains.reduce((total, domain) => total + (usage[domain] || 0), 0);
+  const activeLimits = Object.keys(limits || {}).filter(domain => limits[domain] > 0).length;
+  const supportedSites = Object.keys(DISTRACTION_RULES).length;
+
+  const card = createElement("div", "overview-card");
+  const header = createElement("div", "overview-header");
+  header.appendChild(createElement("span", "section-title overview-title", "Today"));
+  header.appendChild(createElement("span", "overview-total", formatMinutes(totalSeconds)));
+  card.appendChild(header);
+
+  if (settings.enabled === false) {
+    card.appendChild(createElement("div", "disabled-note", "Extension is off. Rules and time limits are paused."));
+  }
+
+  const stats = createElement("div", "overview-stats");
+  stats.appendChild(createStat("Tracked", String(trackedDomains.length)));
+  stats.appendChild(createStat("Limits", String(activeLimits)));
+  stats.appendChild(createStat("Rules", String(supportedSites)));
+  card.appendChild(stats);
+
+  const topList = createElement("div", "top-sites");
+  const topEntries = trackedDomains
+    .map(domain => [domain, usage[domain] || 0])
+    .filter(([, seconds]) => seconds > 0)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 3);
+
+  if (topEntries.length === 0) {
+    topList.appendChild(createElement("div", "empty-state", "No tracked time today."));
+  } else {
+    const maxSeconds = Math.max(...topEntries.map(([, seconds]) => seconds));
+    topEntries.forEach(([domain, seconds]) => {
+      topList.appendChild(createUsageRow(domain, seconds, maxSeconds));
+    });
+  }
+  card.appendChild(topList);
+
+  card.appendChild(createWeekStrip(usageByDate));
+  container.appendChild(card);
+}
+
+function createStat(label, value) {
+  const stat = createElement("div", "overview-stat");
+  stat.appendChild(createElement("span", "overview-stat-value", value));
+  stat.appendChild(createElement("span", "overview-stat-label", label));
+  return stat;
+}
+
+function createUsageRow(domain, seconds, maxSeconds) {
+  const row = createElement("div", "usage-row");
+  const info = createElement("div", "usage-row-info");
+  info.appendChild(createElement("span", "usage-site", siteName(domain)));
+  info.appendChild(createElement("span", "usage-time", formatMinutes(seconds)));
+
+  const track = createElement("div", "usage-bar-track");
+  const bar = createElement("div", "usage-bar");
+  bar.style.width = `${Math.max(8, Math.round((seconds / maxSeconds) * 100))}%`;
+  track.appendChild(bar);
+
+  row.appendChild(info);
+  row.appendChild(track);
+  return row;
+}
+
+function createWeekStrip(usageByDate) {
+  const strip = createElement("div", "week-strip");
+  const today = new Date();
+  const days = [];
+
+  for (let i = 6; i >= 0; i -= 1) {
+    const date = addDays(today, -i);
+    const key = todayKey(date);
+    const dayUsage = usageByDate[key] || {};
+    const total = Object.values(dayUsage).reduce((sum, seconds) => sum + Number(seconds || 0), 0);
+    days.push({ key, label: date.toLocaleDateString(UI_LOCALE, { weekday: "narrow" }), total });
+  }
+
+  const maxTotal = Math.max(1, ...days.map(day => day.total));
+  days.forEach((day) => {
+    const item = createElement("div", "week-day");
+    const bar = createElement("span", "week-day-bar");
+    bar.style.height = `${Math.max(4, Math.round((day.total / maxTotal) * 32))}px`;
+    item.appendChild(bar);
+    item.appendChild(createElement("span", "week-day-label", day.label));
+    strip.appendChild(item);
+  });
+
+  return strip;
+}
+
+function renderSites(prefs, limits, usage) {
+  const container = document.getElementById("sites-container");
+  container.innerHTML = "";
 
   for (const [domain, site] of Object.entries(DISTRACTION_RULES)) {
+    const accordion = createElement("div", "accordion");
+    const header = createSiteHeader(site);
+    const content = createElement("div", "accordion-content");
+    const inner = createElement("div", "accordion-inner");
 
-    const accordion = document.createElement('div');
-    accordion.className = 'accordion';
+    renderFeatureGroups(inner, site.features || [], prefs);
+    renderLimitControls(inner, domain, limits, usage);
 
-    // ── Header ──
-    const header = document.createElement('div');
-    header.className = 'accordion-header';
-    const titleDiv = document.createElement('div');
-    titleDiv.className = 'accordion-title';
-    const dot = document.createElement('span');
-    dot.className = 'site-dot';
-    titleDiv.appendChild(dot);
-    titleDiv.appendChild(document.createTextNode(site.name));
-
-    const iconDiv = document.createElement('div');
-    iconDiv.className = 'accordion-icon';
-    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-    svg.setAttribute('width', '20');
-    svg.setAttribute('height', '20');
-    svg.setAttribute('viewBox', '0 0 24 24');
-    svg.setAttribute('fill', 'none');
-    svg.setAttribute('stroke', 'currentColor');
-    svg.setAttribute('stroke-width', '2');
-    svg.setAttribute('stroke-linecap', 'round');
-    svg.setAttribute('stroke-linejoin', 'round');
-    const svgPath = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-    svgPath.setAttribute('d', 'm6 9 6 6 6-6');
-    svg.appendChild(svgPath);
-    iconDiv.appendChild(svg);
-    header.appendChild(titleDiv);
-    header.appendChild(iconDiv);
-
-    // ── Content ──
-    const content = document.createElement('div');
-    content.className = 'accordion-content';
-
-    const inner = document.createElement('div');
-    inner.className = 'accordion-inner';
     content.appendChild(inner);
-
-    // Rules Section
-    if (site.features && site.features.length > 0) {
-      const rulesTitle = document.createElement('div');
-      rulesTitle.className = 'section-title';
-      rulesTitle.textContent = 'Features to Hide';
-      inner.appendChild(rulesTitle);
-
-      site.features.forEach(f => {
-        const row = document.createElement('div');
-        row.className = 'feature-item';
-        const featureTitle = document.createElement('span');
-        featureTitle.className = 'feature-title';
-        featureTitle.textContent = f.title;
-        const switchLabel = document.createElement('label');
-        switchLabel.className = 'switch';
-        const toggle = document.createElement('input');
-        toggle.type = 'checkbox';
-        toggle.dataset.id = f.id;
-        const slider = document.createElement('span');
-        slider.className = 'slider';
-        switchLabel.appendChild(toggle);
-        switchLabel.appendChild(slider);
-        row.appendChild(featureTitle);
-        row.appendChild(switchLabel);
-        inner.appendChild(row);
-        toggle.checked = prefs[f.id] !== false;
-        toggle.addEventListener('change', e => {
-          prefs[f.id] = e.target.checked;
-          storageSet({ preferences: prefs });
-        });
-      });
-    }
-
-    // Limits Section
-    const limitVal = limits[domain] || 0;
-    const usedSec  = usage[domain]  || 0;
-    const usedMin  = Math.floor(usedSec / 60);
-    let pct = 0, cls = '';
-    if (limitVal > 0) {
-      pct = Math.min((usedMin / limitVal) * 100, 100);
-      if (pct > 90) cls = 'danger';
-      else if (pct > 75) cls = 'warning';
-    }
-
-    const limitsTitle = document.createElement('div');
-    limitsTitle.className = 'section-title mt-4';
-    limitsTitle.textContent = 'Time Limit';
-    inner.appendChild(limitsTitle);
-
-    const lCard = document.createElement('div');
-    lCard.className = 'limit-section';
-    const limitInfo = document.createElement('div');
-    limitInfo.className = 'limit-info';
-    const limitTime = document.createElement('span');
-    limitTime.className = 'limit-time';
-    limitTime.textContent = `Used: ${usedMin}m${limitVal > 0 ? ' / ' + limitVal + 'm' : ''}`;
-    limitInfo.appendChild(limitTime);
-    lCard.appendChild(limitInfo);
-
-    if (limitVal > 0) {
-      const progressTrack = document.createElement('div');
-      progressTrack.className = 'progress-track';
-      const progressBar = document.createElement('div');
-      progressBar.className = cls ? `progress-bar ${cls}` : 'progress-bar';
-      progressBar.style.width = `${pct}%`;
-      progressTrack.appendChild(progressBar);
-      lCard.appendChild(progressTrack);
-    }
-
-    const limitControls = document.createElement('div');
-    limitControls.className = 'limit-controls';
-    const input = document.createElement('input');
-    input.type = 'number';
-    input.className = 'limit-input';
-    input.placeholder = '0 = off (mins)';
-    if (limitVal) input.value = limitVal;
-    input.min = '0';
-    const saveBtn = document.createElement('button');
-    saveBtn.className = 'btn-save';
-    saveBtn.dataset.domain = domain;
-    saveBtn.textContent = 'Save';
-    limitControls.appendChild(input);
-    limitControls.appendChild(saveBtn);
-    lCard.appendChild(limitControls);
-
-    saveBtn.addEventListener('click', (e) => {
-      e.stopPropagation();
-      const v = parseInt(input.value) || 0;
-      if (v > 0) limits[domain] = v;
-      else delete limits[domain];
-      storageSet({ limits }).then(() => {
-        saveBtn.textContent = 'Saved!';
-        saveBtn.classList.add('saved');
-        setTimeout(() => {
-          saveBtn.textContent = 'Save';
-          saveBtn.classList.remove('saved');
-        }, 1200);
-      });
-    });
-
-    input.addEventListener('click', e => e.stopPropagation());
-
-    inner.appendChild(lCard);
     accordion.appendChild(header);
     accordion.appendChild(content);
-
-    // Toggle logic
-    header.addEventListener('click', () => {
-      const isOpen = accordion.classList.contains('open');
-      document.querySelectorAll('.accordion').forEach(acc => acc.classList.remove('open'));
-      if (!isOpen) {
-        accordion.classList.add('open');
-        setTimeout(() => {
-          accordion.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-        }, 300);
-      }
-    });
-
+    header.addEventListener("click", () => toggleAccordion(accordion));
     container.appendChild(accordion);
+  }
+}
+
+function createSiteHeader(site) {
+  const header = createElement("div", "accordion-header");
+  const titleDiv = createElement("div", "accordion-title");
+  titleDiv.appendChild(createElement("span", "site-dot"));
+  titleDiv.appendChild(createElement("span", "", site.name));
+
+  const iconDiv = createElement("div", "accordion-icon");
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("width", "20");
+  svg.setAttribute("height", "20");
+  svg.setAttribute("viewBox", "0 0 24 24");
+  svg.setAttribute("fill", "none");
+  svg.setAttribute("stroke", "currentColor");
+  svg.setAttribute("stroke-width", "2");
+  svg.setAttribute("stroke-linecap", "round");
+  svg.setAttribute("stroke-linejoin", "round");
+  const svgPath = document.createElementNS("http://www.w3.org/2000/svg", "path");
+  svgPath.setAttribute("d", "m6 9 6 6 6-6");
+  svg.appendChild(svgPath);
+  iconDiv.appendChild(svg);
+
+  header.appendChild(titleDiv);
+  header.appendChild(iconDiv);
+  return header;
+}
+
+function renderFeatureGroups(parent, features, prefs) {
+  const groups = features.reduce((acc, feature) => {
+    const groupName = feature.group || "Features";
+    acc[groupName] = acc[groupName] || [];
+    acc[groupName].push(feature);
+    return acc;
+  }, {});
+
+  Object.entries(groups).forEach(([groupName, groupFeatures]) => {
+    parent.appendChild(createElement("div", "section-title", groupName));
+
+    groupFeatures.forEach((feature) => {
+      const row = createElement("div", "feature-item");
+      const featureTitle = createElement("span", "feature-title", feature.title);
+      const switchLabel = createElement("label", "switch");
+      const toggle = document.createElement("input");
+      const slider = createElement("span", "slider");
+
+      toggle.type = "checkbox";
+      toggle.dataset.id = feature.id;
+      toggle.checked = dfwIsFeatureEnabled(feature, prefs);
+
+      toggle.addEventListener("change", (event) => {
+        prefs[feature.id] = event.target.checked;
+        storageSet("sync", { preferences: prefs });
+      });
+
+      switchLabel.appendChild(toggle);
+      switchLabel.appendChild(slider);
+      row.appendChild(featureTitle);
+      row.appendChild(switchLabel);
+      parent.appendChild(row);
+    });
+  });
+}
+
+function renderLimitControls(parent, domain, limits, usage) {
+  const limitVal = limits[domain] || 0;
+  const usedSec = usage[domain] || 0;
+  const usedMin = Math.floor(usedSec / 60);
+  let pct = 0;
+  let cls = "";
+
+  if (limitVal > 0) {
+    pct = Math.min((usedMin / limitVal) * 100, 100);
+    if (pct > 90) cls = "danger";
+    else if (pct > 75) cls = "warning";
+  }
+
+  parent.appendChild(createElement("div", "section-title mt-4", "Time Limit"));
+
+  const limitCard = createElement("div", "limit-section");
+  const limitInfo = createElement("div", "limit-info");
+  limitInfo.appendChild(createElement("span", "limit-time", `Used: ${formatMinutes(usedSec)}${limitVal > 0 ? ` / ${limitVal}m` : ""}`));
+  limitCard.appendChild(limitInfo);
+
+  if (limitVal > 0) {
+    const progressTrack = createElement("div", "progress-track");
+    const progressBar = createElement("div", cls ? `progress-bar ${cls}` : "progress-bar");
+    progressBar.style.width = `${pct}%`;
+    progressTrack.appendChild(progressBar);
+    limitCard.appendChild(progressTrack);
+  }
+
+  const limitControls = createElement("div", "limit-controls");
+  const input = document.createElement("input");
+  input.type = "number";
+  input.className = "limit-input";
+  input.placeholder = "0 = off (mins)";
+  input.min = "0";
+  if (limitVal) input.value = limitVal;
+
+  const saveBtn = createElement("button", "btn-save", "Save");
+  saveBtn.type = "button";
+  saveBtn.dataset.domain = domain;
+
+  saveBtn.addEventListener("click", (event) => {
+    event.stopPropagation();
+    const nextLimit = parseInt(input.value, 10) || 0;
+    if (nextLimit > 0) limits[domain] = nextLimit;
+    else delete limits[domain];
+
+    storageSet("sync", { limits }).then(() => {
+      saveBtn.textContent = "Saved";
+      saveBtn.classList.add("saved");
+      setTimeout(() => {
+        saveBtn.textContent = "Save";
+        saveBtn.classList.remove("saved");
+        loadStoredData();
+      }, 900);
+    });
+  });
+
+  input.addEventListener("click", event => event.stopPropagation());
+
+  limitControls.appendChild(input);
+  limitControls.appendChild(saveBtn);
+  limitCard.appendChild(limitControls);
+  parent.appendChild(limitCard);
+}
+
+function toggleAccordion(accordion) {
+  const isOpen = accordion.classList.contains("open");
+  document.querySelectorAll(".accordion").forEach(acc => acc.classList.remove("open"));
+  if (!isOpen) {
+    accordion.classList.add("open");
+    setTimeout(() => {
+      accordion.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    }, 300);
   }
 }

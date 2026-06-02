@@ -16,21 +16,22 @@
 }
 
 .dfw-block-icon {
-  font-size: 64px !important;
-  margin-bottom: 24px !important;
-  animation: dfw-pulse 2s ease-in-out infinite !important;
-}
-
-@keyframes dfw-pulse {
-  0%, 100% { opacity: 1; transform: scale(1); }
-  50% { opacity: 0.7; transform: scale(1.05); }
+  padding: 8px 12px !important;
+  margin-bottom: 22px !important;
+  border: 1px solid rgba(148, 163, 184, 0.28) !important;
+  border-radius: 999px !important;
+  color: #cbd5e1 !important;
+  font-size: 12px !important;
+  font-weight: 700 !important;
+  letter-spacing: 0 !important;
+  text-transform: uppercase !important;
 }
 
 .dfw-block-title {
   font-size: 28px !important;
   font-weight: 700 !important;
   margin-bottom: 12px !important;
-  letter-spacing: -0.5px !important;
+  letter-spacing: 0 !important;
 }
 
 .dfw-block-message {

@@ -1,147 +1,512 @@
-/* ─── Cross-browser API helpers ─── */
-const api = typeof browser !== 'undefined' ? browser : chrome;
+try {
+  if (typeof DISTRACTION_RULES === "undefined" && typeof importScripts === "function") {
+    importScripts("../config/rules.js");
+  }
+} catch (error) {}
 
-function storageGet(keys) {
+const api = typeof browser !== "undefined" ? browser : chrome;
+const usesPromiseApi = typeof browser !== "undefined";
+
+const TRACKING_ALARM = "dfwSaveTimeProgress";
+const DAILY_ALARM = "dfwDailyMaintenance";
+const TRACKING_INTERVAL_MINUTES = 0.5;
+const USAGE_HISTORY_DAYS = 30;
+
+function storageGet(areaName, keys) {
+  const area = api.storage && api.storage[areaName];
+  if (!area) return Promise.resolve({});
+
+  if (usesPromiseApi) {
+    return area.get(keys).catch(() => {
+      if (areaName === "sync" && api.storage.local) {
+        return api.storage.local.get(keys).catch(() => ({}));
+      }
+      return {};
+    });
+  }
+
   return new Promise((resolve) => {
     try {
-      const result = api.storage.sync.get(keys);
-      if (result && typeof result.then === 'function') {
-        result.then(resolve).catch(() => {
-          api.storage.local.get(keys).then(resolve).catch(() => resolve({}));
-        });
-      } else {
-        api.storage.sync.get(keys, (data) => {
-          if (api.runtime.lastError) {
-            api.storage.local.get(keys, (d) => resolve(d || {}));
-          } else {
-            resolve(data || {});
-          }
-        });
-      }
-    } catch (e) {
+      area.get(keys, (data) => {
+        if (api.runtime.lastError && areaName === "sync" && api.storage.local) {
+          api.storage.local.get(keys, (localData) => resolve(localData || {}));
+          return;
+        }
+        resolve(data || {});
+      });
+    } catch (error) {
       resolve({});
     }
   });
 }
 
-function storageSet(obj) {
+function storageSet(areaName, obj) {
+  const area = api.storage && api.storage[areaName];
+  if (!area) return Promise.resolve();
+
+  if (usesPromiseApi) {
+    return area.set(obj).catch(() => {
+      if (areaName === "sync" && api.storage.local) {
+        return api.storage.local.set(obj).catch(() => {});
+      }
+    });
+  }
+
   return new Promise((resolve) => {
     try {
-      const result = api.storage.sync.set(obj);
-      if (result && typeof result.then === 'function') {
-        result.then(resolve).catch(() => {
-          api.storage.local.set(obj).then(resolve).catch(resolve);
-        });
-      } else {
-        api.storage.sync.set(obj, () => resolve());
-      }
-    } catch (e) {
+      area.set(obj, () => {
+        if (api.runtime.lastError && areaName === "sync" && api.storage.local) {
+          api.storage.local.set(obj, () => resolve());
+          return;
+        }
+        resolve();
+      });
+    } catch (error) {
       resolve();
     }
   });
 }
 
-/* ─── State ─── */
-let currentActiveDomain = null;
-let domainStartTime = 0;
-let dismissedDomains = {};
+function apiCall(namespace, methodName, ...args) {
+  if (!namespace || typeof namespace[methodName] !== "function") {
+    return Promise.resolve(undefined);
+  }
 
-/* ─── Functions ─── */
-function checkLimitAndNotify(domain, totalSeconds) {
-  storageGet(['limits']).then((data) => {
-    const limits = data.limits || {};
-    if (limits[domain] && totalSeconds >= limits[domain] * 60) {
-      if (!dismissedDomains[domain]) {
-        api.tabs.query({ url: `*://*.${domain}/*` }).then((tabs) => {
-          tabs.forEach(tab => {
-            api.tabs.sendMessage(tab.id, { action: "LIMIT_REACHED" }).catch(() => {});
-          });
-        }).catch(() => {});
-      }
+  if (usesPromiseApi) {
+    return namespace[methodName](...args).catch(() => undefined);
+  }
+
+  return new Promise((resolve) => {
+    try {
+      namespace[methodName](...args, (result) => resolve(result));
+    } catch (error) {
+      resolve(undefined);
     }
   });
 }
 
-function updateUsage() {
-  if (!currentActiveDomain || !domainStartTime) return;
-  const now = Date.now();
-  const seconds = Math.floor((now - domainStartTime) / 1000);
-  if (seconds > 0) {
-    storageGet(['usageData']).then((result) => {
-      const usage = result.usageData || {};
-      usage[currentActiveDomain] = (usage[currentActiveDomain] || 0) + seconds;
-      storageSet({ usageData: usage });
-      checkLimitAndNotify(currentActiveDomain, usage[currentActiveDomain]);
-    });
-  }
-  domainStartTime = now;
+function todayKey(date = new Date()) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
 }
 
-function setActiveDomain(domain) {
-  if (currentActiveDomain === domain) return;
-  if (currentActiveDomain) updateUsage();
-  currentActiveDomain = domain;
-  domainStartTime = domain ? Date.now() : 0;
+function dateKeyFromStoredDate(value) {
+  if (typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    return value;
+  }
+
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? todayKey() : todayKey(parsed);
+}
+
+function nextMidnightMs(timestamp) {
+  const date = new Date(timestamp);
+  date.setHours(24, 0, 0, 0);
+  return date.getTime();
+}
+
+function getSiteEntryForHostname(hostname) {
+  if (typeof dfwGetSiteEntryForHost === "function") {
+    return dfwGetSiteEntryForHost(hostname);
+  }
+  return null;
+}
+
+function getSiteEntryForDomain(domain) {
+  if (typeof dfwGetSiteEntry === "function") {
+    return dfwGetSiteEntry(domain);
+  }
+  return null;
 }
 
 function getDomainFromTab(tab) {
   try {
-    if (tab && tab.url && tab.url.startsWith("http")) {
-      return new URL(tab.url).hostname.replace('www.', '');
-    }
-  } catch (e) {}
-  return null;
+    if (!tab || !tab.url || !tab.url.startsWith("http")) return null;
+    const hostname = new URL(tab.url).hostname;
+    const entry = getSiteEntryForHostname(hostname);
+    return entry ? entry.domain : normalizeTrackedDomain(hostname);
+  } catch (error) {
+    return null;
+  }
 }
 
-/* ─── Event Listeners ─── */
-api.tabs.onActivated.addListener(info => {
-  api.tabs.get(info.tabId).then(tab => {
-    setActiveDomain(getDomainFromTab(tab));
-  }).catch(() => setActiveDomain(null));
+function normalizeTrackedDomain(hostname) {
+  const cleanHost = String(hostname || "")
+    .toLowerCase()
+    .replace(/:\d+$/, "")
+    .replace(/^(www|m|mobile)\./, "");
+  const parts = cleanHost.split(".").filter(Boolean);
+
+  if (parts.length <= 2) return cleanHost;
+
+  const tld = parts[parts.length - 1];
+  const secondLevel = parts[parts.length - 2];
+  const commonCountrySecondLevels = ["ac", "co", "com", "edu", "gov", "net", "org"];
+  const keepParts = tld.length === 2 && commonCountrySecondLevels.includes(secondLevel) ? 3 : 2;
+  return parts.slice(-keepParts).join(".");
+}
+
+function getPageFromTab(tab, domain) {
+  try {
+    const url = new URL(tab.url);
+    const parts = url.pathname
+      .split("/")
+      .filter(Boolean)
+      .slice(0, 3)
+      .map(part => part.slice(0, 48));
+    const path = parts.length ? `/${parts.join("/")}` : "/";
+    const label = `${domain}${path === "/" ? "" : path}`;
+
+    return {
+      id: label,
+      domain,
+      path,
+      label,
+      title: label
+    };
+  } catch (error) {
+    return {
+      id: `${domain}/`,
+      domain,
+      path: "/",
+      label: domain,
+      title: domain
+    };
+  }
+}
+
+function getTrackingTargetFromTab(tab) {
+  const domain = getDomainFromTab(tab);
+  if (!domain) return null;
+
+  return {
+    domain,
+    page: getPageFromTab(tab, domain)
+  };
+}
+
+async function getActiveTab() {
+  const focusedTabs = await apiCall(api.tabs, "query", { active: true, lastFocusedWindow: true });
+  if (Array.isArray(focusedTabs) && focusedTabs[0]) return focusedTabs[0];
+
+  const currentTabs = await apiCall(api.tabs, "query", { active: true, currentWindow: true });
+  return Array.isArray(currentTabs) && currentTabs[0] ? currentTabs[0] : null;
+}
+
+async function isExtensionEnabled() {
+  const data = await storageGet("sync", ["settings"]);
+  const settings = data.settings || {};
+  return settings.enabled !== false;
+}
+
+async function migrateLegacyUsage() {
+  const localData = await storageGet("local", ["usageData", "usageByDate", "currentDate", "dfwUsageMigrated"]);
+  const syncData = await storageGet("sync", ["usageData", "currentDate"]);
+  const legacyUsage = localData.usageData || syncData.usageData || {};
+
+  if (localData.dfwUsageMigrated || Object.keys(legacyUsage).length === 0) {
+    return;
+  }
+
+  const dateKey = dateKeyFromStoredDate(localData.currentDate || syncData.currentDate);
+  const usageByDate = localData.usageByDate || {};
+  usageByDate[dateKey] = {
+    ...(usageByDate[dateKey] || {}),
+    ...legacyUsage
+  };
+
+  await storageSet("local", {
+    usageByDate,
+    usageData: usageByDate[todayKey()] || {},
+    dfwUsageMigrated: true
+  });
+}
+
+function pruneDateMap(dataByDate) {
+  const cutoff = Date.now() - USAGE_HISTORY_DAYS * 24 * 60 * 60 * 1000;
+  const pruned = {};
+
+  Object.entries(dataByDate || {}).forEach(([date, usage]) => {
+    const parsed = new Date(`${date}T00:00:00`);
+    if (!Number.isNaN(parsed.getTime()) && parsed.getTime() >= cutoff) {
+      pruned[date] = usage;
+    }
+  });
+
+  return pruned;
+}
+
+async function addUsageForRange(domain, page, startMs, endMs) {
+  if (!domain || !startMs || !endMs || endMs <= startMs) return 0;
+
+  const data = await storageGet("local", ["usageByDate", "pageUsageByDate"]);
+  const usageByDate = data.usageByDate || {};
+  const pageUsageByDate = data.pageUsageByDate || {};
+  const pageEntry = page && page.id ? page : {
+    id: `${domain}/`,
+    domain,
+    path: "/",
+    label: domain,
+    title: domain
+  };
+  let cursor = startMs;
+
+  while (cursor < endMs) {
+    const segmentEnd = Math.min(endMs, nextMidnightMs(cursor));
+    const seconds = Math.floor((segmentEnd - cursor) / 1000);
+    if (seconds > 0) {
+      const dateKey = todayKey(new Date(cursor));
+      usageByDate[dateKey] = usageByDate[dateKey] || {};
+      usageByDate[dateKey][domain] = (usageByDate[dateKey][domain] || 0) + seconds;
+
+      pageUsageByDate[dateKey] = pageUsageByDate[dateKey] || {};
+      const currentPage = pageUsageByDate[dateKey][pageEntry.id] || {
+        id: pageEntry.id,
+        domain,
+        path: pageEntry.path,
+        label: pageEntry.label,
+        title: pageEntry.title,
+        seconds: 0
+      };
+      currentPage.seconds = (currentPage.seconds || 0) + seconds;
+      currentPage.title = pageEntry.title || currentPage.title;
+      pageUsageByDate[dateKey][pageEntry.id] = currentPage;
+    }
+    cursor = segmentEnd;
+  }
+
+  const todayUsage = usageByDate[todayKey()] || {};
+  await storageSet("local", {
+    usageByDate: pruneDateMap(usageByDate),
+    pageUsageByDate: pruneDateMap(pageUsageByDate),
+    usageData: todayUsage
+  });
+
+  return todayUsage[domain] || 0;
+}
+
+async function tickActiveSession(nowMs = Date.now()) {
+  if (!(await isExtensionEnabled())) {
+    await storageSet("local", { trackingState: null });
+    return null;
+  }
+
+  const data = await storageGet("local", ["trackingState"]);
+  const state = data.trackingState;
+  if (!state || !state.domain) return null;
+
+  const startMs = Number(state.lastTickAt || state.startedAt || nowMs);
+  const totalSeconds = await addUsageForRange(state.domain, state.page, startMs, nowMs);
+  const updatedState = { ...state, lastTickAt: nowMs };
+
+  await storageSet("local", { trackingState: updatedState });
+  await checkLimitAndNotify(state.domain, totalSeconds);
+  return updatedState;
+}
+
+async function setActiveTracking(target, tabId) {
+  if (!(await isExtensionEnabled())) {
+    await storageSet("local", { trackingState: null });
+    return;
+  }
+
+  const nowMs = Date.now();
+  const data = await storageGet("local", ["trackingState"]);
+  const state = data.trackingState;
+  const domain = target ? target.domain : null;
+  const page = target ? target.page : null;
+
+  if (state && state.domain === domain && state.tabId === tabId && (!page || (state.page && state.page.id === page.id))) {
+    return;
+  }
+
+  if (state && state.domain) {
+    await tickActiveSession(nowMs);
+  }
+
+  if (!domain) {
+    await storageSet("local", { trackingState: null });
+    return;
+  }
+
+  await storageSet("local", {
+    trackingState: {
+      domain,
+      page,
+      tabId,
+      startedAt: nowMs,
+      lastTickAt: nowMs
+    }
+  });
+}
+
+async function setActiveFromTab(tab) {
+  await setActiveTracking(getTrackingTargetFromTab(tab), tab && tab.id);
+}
+
+async function refreshActiveTab() {
+  const tab = await getActiveTab();
+  await setActiveFromTab(tab);
+}
+
+async function getDismissedForToday() {
+  const data = await storageGet("local", ["dismissedLimitsByDate"]);
+  const dismissedLimitsByDate = data.dismissedLimitsByDate || {};
+  return dismissedLimitsByDate[todayKey()] || {};
+}
+
+async function checkLimitAndNotify(domain, knownTotalSeconds) {
+  const settings = await storageGet("sync", ["settings", "limits"]);
+  if ((settings.settings || {}).enabled === false) return;
+
+  const limits = settings.limits || {};
+  const limitMinutes = limits[domain];
+  if (!limitMinutes) return;
+
+  let totalSeconds = knownTotalSeconds;
+  if (totalSeconds === undefined) {
+    const usageData = await storageGet("local", ["usageByDate"]);
+    totalSeconds = ((usageData.usageByDate || {})[todayKey()] || {})[domain] || 0;
+  }
+
+  if (totalSeconds < limitMinutes * 60) return;
+
+  const dismissed = await getDismissedForToday();
+  if (dismissed[domain]) return;
+
+  const patterns = typeof dfwGetSiteHostPatterns === "function"
+    ? dfwGetSiteHostPatterns(domain)
+    : [`*://*.${domain}/*`, `*://${domain}/*`];
+  const tabsById = {};
+
+  for (const pattern of patterns) {
+    const tabs = await apiCall(api.tabs, "query", { url: pattern });
+    if (Array.isArray(tabs)) {
+      tabs.forEach((tab) => {
+        if (tab && tab.id !== undefined) tabsById[tab.id] = tab;
+      });
+    }
+  }
+
+  Object.keys(tabsById).forEach((tabId) => {
+    apiCall(api.tabs, "sendMessage", Number(tabId), {
+      action: "LIMIT_REACHED",
+      domain,
+      usedSeconds: totalSeconds,
+      limitMinutes
+    });
+  });
+}
+
+async function dismissLimitForToday(domain) {
+  if (!getSiteEntryForDomain(domain)) return;
+
+  const data = await storageGet("local", ["dismissedLimitsByDate"]);
+  const dismissedLimitsByDate = data.dismissedLimitsByDate || {};
+  const today = todayKey();
+  dismissedLimitsByDate[today] = dismissedLimitsByDate[today] || {};
+  dismissedLimitsByDate[today][domain] = true;
+
+  await storageSet("local", { dismissedLimitsByDate });
+}
+
+async function runDailyMaintenance() {
+  await migrateLegacyUsage();
+
+  const today = todayKey();
+  const data = await storageGet("local", ["currentDate", "usageByDate", "pageUsageByDate", "dismissedLimitsByDate"]);
+  const update = {
+    usageByDate: pruneDateMap(data.usageByDate || {}),
+    pageUsageByDate: pruneDateMap(data.pageUsageByDate || {}),
+    usageData: ((data.usageByDate || {})[today] || {})
+  };
+
+  if (data.currentDate !== today) {
+    update.currentDate = today;
+    update.dismissedLimitsByDate = { [today]: ((data.dismissedLimitsByDate || {})[today] || {}) };
+  }
+
+  await storageSet("local", update);
+}
+
+function createTrackingAlarms() {
+  try {
+    api.alarms.create(TRACKING_ALARM, {
+      delayInMinutes: TRACKING_INTERVAL_MINUTES,
+      periodInMinutes: TRACKING_INTERVAL_MINUTES
+    });
+    api.alarms.create(DAILY_ALARM, {
+      delayInMinutes: 1,
+      periodInMinutes: 60
+    });
+  } catch (error) {}
+}
+
+api.tabs.onActivated.addListener((info) => {
+  apiCall(api.tabs, "get", info.tabId).then(setActiveFromTab);
 });
 
-api.tabs.onUpdated.addListener((id, change, tab) => {
-  if (tab.active) {
-    const domain = getDomainFromTab(tab);
-    if (domain) setActiveDomain(domain);
+api.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
+  if (tab && tab.active && (changeInfo.url || changeInfo.status === "complete")) {
+    setActiveFromTab(tab);
   }
 });
 
-api.windows.onFocusChanged.addListener(wId => {
-  if (wId === api.windows.WINDOW_ID_NONE) {
-    setActiveDomain(null);
-  } else {
-    api.tabs.query({ active: true, windowId: wId }).then(tabs => {
-      setActiveDomain(getDomainFromTab(tabs[0]));
-    }).catch(() => {});
-  }
+api.tabs.onRemoved.addListener((tabId) => {
+  storageGet("local", ["trackingState"]).then((data) => {
+    if (data.trackingState && data.trackingState.tabId === tabId) {
+      refreshActiveTab();
+    }
+  });
 });
 
-/* ─── Alarms ─── */
-api.alarms.create("resetDailyData", { periodInMinutes: 60 });
-api.alarms.create("saveTimeProgress", { periodInMinutes: 1 / 6 });
+api.windows.onFocusChanged.addListener((windowId) => {
+  if (windowId === api.windows.WINDOW_ID_NONE) {
+    setActiveTracking(null, null);
+    return;
+  }
+  refreshActiveTab();
+});
 
 api.alarms.onAlarm.addListener((alarm) => {
-  if (alarm.name === "resetDailyData") {
-    const today = new Date().toDateString();
-    storageGet(['currentDate']).then((data) => {
-      if (data.currentDate !== today) {
-        storageSet({ usageData: {}, currentDate: today });
-        dismissedDomains = {};
-      }
-    });
+  if (alarm.name === TRACKING_ALARM) {
+    tickActiveSession();
   }
-  if (alarm.name === "saveTimeProgress" && currentActiveDomain) {
-    updateUsage();
+  if (alarm.name === DAILY_ALARM) {
+    runDailyMaintenance();
   }
 });
 
 api.runtime.onInstalled.addListener(() => {
-  storageSet({ currentDate: new Date().toDateString() });
+  createTrackingAlarms();
+  runDailyMaintenance();
+  refreshActiveTab();
 });
 
+if (api.runtime.onStartup) {
+  api.runtime.onStartup.addListener(() => {
+    createTrackingAlarms();
+    runDailyMaintenance();
+    refreshActiveTab();
+  });
+}
+
 api.runtime.onMessage.addListener((message) => {
-  if (message.action === "DISMISS_LIMIT" && message.domain) {
-    dismissedDomains[message.domain] = true;
+  if (message && message.action === "DISMISS_LIMIT" && message.domain) {
+    dismissLimitForToday(message.domain);
+  }
+
+  if (message && message.action === "SET_EXTENSION_ENABLED") {
+    if (message.enabled === false) {
+      setActiveTracking(null, null);
+      return;
+    }
+    refreshActiveTab();
   }
 });
+
+createTrackingAlarms();
+runDailyMaintenance();
+refreshActiveTab();

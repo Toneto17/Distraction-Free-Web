@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Distraction Free Web Dashboard</title>
+  <link rel="stylesheet" href="dashboard.css">
+</head>
+<body>
+  <header class="topbar">
+    <div>
+      <h1>Usage Dashboard</h1>
+      <p>Local insights from your tracked web use.</p>
+    </div>
+  </header>
+
+  <main>
+    <section class="summary-grid" aria-label="Summary">
+      <article class="metric-panel">
+        <span class="metric-label">Total time</span>
+        <strong id="total-time">0m</strong>
+      </article>
+      <article class="metric-panel">
+        <span id="daily-average-label" class="metric-label">Average (7d)</span>
+        <strong id="daily-average">0m</strong>
+      </article>
+      <article class="metric-panel">
+        <span class="metric-label">Most active day</span>
+        <strong id="most-active-day">None</strong>
+      </article>
+      <article class="metric-panel">
+        <span class="metric-label">Top site</span>
+        <strong id="top-site">None</strong>
+      </article>
+    </section>
+
+    <section class="dashboard-grid">
+      <section class="panel panel-wide">
+        <div class="panel-header">
+          <div class="panel-title">
+            <h2>Daily Rhythm</h2>
+            <span id="bars-caption">Last 7 days • Average 0m/day</span>
+          </div>
+          <div class="range-tabs" role="group" aria-label="Date range">
+            <button class="range-btn active" type="button" data-days="7">7d</button>
+            <button class="range-btn" type="button" data-days="14">14d</button>
+            <button class="range-btn" type="button" data-days="30">30d</button>
+          </div>
+        </div>
+        <div id="daily-bars" class="daily-bars" aria-label="Daily usage bar chart"></div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-header">
+          <h2>Time Split</h2>
+          <span id="pie-caption">By site</span>
+        </div>
+        <div class="pie-wrap">
+          <div id="pie-chart" class="pie-chart" aria-label="Usage by site"></div>
+          <div id="pie-legend" class="pie-legend"></div>
+        </div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-header">
+          <h2>Activity Heatmap</h2>
+          <span id="heatmap-caption">Last 12 weeks</span>
+        </div>
+        <div id="heatmap" class="heatmap" aria-label="Daily activity heatmap"></div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-header">
+          <h2>Top Sites</h2>
+          <span>Domains</span>
+        </div>
+        <div id="top-sites-list" class="rank-list"></div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-header">
+          <h2>Top Pages</h2>
+          <span>Grouped paths</span>
+        </div>
+        <div id="top-pages-list" class="rank-list"></div>
+      </section>
+
+      <section class="panel panel-wide">
+        <div class="panel-header">
+          <h2>Insights</h2>
+          <span>Patterns</span>
+        </div>
+        <div id="insights-list" class="insights-list"></div>
+      </section>
+    </section>
+  </main>
+
+  <script src="../config/rules.js"></script>
+  <script src="dashboard.js"></script>
+</body>
+</html>
