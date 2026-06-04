@@ -12,9 +12,9 @@ Distraction Free Web is published on Mozilla Add-ons:
 ## ✨ Features
 
 - **Hide Distractions** — Automatically hides recommended content, shorts, reels, comments, trending sections, and more from popular sites.
-- **Time Limits** — Set a daily usage limit (in minutes) per website. When reached, a full-screen overlay reminds you to take a break.
+- **Time Limits** — Set daily usage limits by domain from the dashboard. When reached, a break screen helps you step away.
 - **Lightweight Usage Overview** — See today's tracked time, top sites, and a local 7-day activity strip from the popup.
-- **Insights Dashboard** — Open a local dashboard with a contribution-style heatmap, time split pie chart, daily rhythm bars, top sites, top pages, and simple insights.
+- **Insights Dashboard** — Open a local dashboard with a contribution-style heatmap, time split pie chart, daily rhythm bars, site limits, and simple domain-level insights.
 - **General Web Time Tracking** — Tracks time on any `http` or `https` domain locally, including sites like Wikipedia, without injecting scripts into every page.
 - **Global On/Off Button** — Turn all blocking, redirects, limits, and tracking off from the popup.
 - **Per-Site Configuration** — Clean accordion-based UI lets you toggle individual features for each website.
@@ -96,8 +96,7 @@ Click the extension icon to open the popup. You'll see an **accordion list** of 
 - **Click a website name** to expand its settings.
 - **Toggle switches** turn individual features on/off (e.g., "Hide Shorts" on YouTube).
 - **On/Off** button pauses or resumes the whole extension.
-- **Dashboard** button opens detailed local usage insights.
-- **Time Limit** section lets you set a daily usage cap in minutes. Hit **Save** to apply.
+- **Dashboard** button opens detailed local usage insights and the site-limit manager.
 - **Reload Page** button reloads the active tab so new settings apply immediately.
 
 ### Content Blocking
@@ -106,14 +105,15 @@ When you visit a supported website, the extension:
 
 1. **Injects CSS rules** to hide the distracting elements you've enabled.
 2. **Redirects** the homepage to a less distracting page (e.g., YouTube Home → Subscriptions) if configured.
-3. **Tracks usage time** locally in the background, grouped by domain and page path.
-4. **Shows a block overlay** when your daily time limit is reached, with an option to dismiss.
+3. **Tracks usage time** locally in the background, grouped by domain only.
+4. **Shows a block overlay** on supported sites when your daily time limit is reached, with a single option to skip the limit for today.
+5. **Shows an internal limit page** for other domains, so broad content-script access is not required.
 
 ### Data Storage
 
-- Preferences and limits are stored using the browser's `storage.sync` API (with `storage.local` fallback).
-- Usage history and dashboard data are stored locally with `storage.local`; they are not synced across devices.
-- Page-level tracking stores the domain and first path segments only; query strings and hash fragments are not stored.
+- Preferences are stored using the browser's `storage.sync` API (with `storage.local` fallback).
+- Site limits, usage history, and dashboard data are stored locally with `storage.local`; they are not synced across devices.
+- Usage tracking is domain-level only; page paths, query strings, hash fragments, and page titles are not stored.
 - The `tabs` permission is used to read the active tab URL for local time tracking; page contents are not read.
 - The extension does not request access to email, banking, health, document, or cloud-storage sites.
 
@@ -132,6 +132,7 @@ Distraction-Free-Web/
 │   ├── dashboard.css
 │   └── dashboard.js
 ├── icons/                 # Extension icons (16–128px)
+├── limit/                 # Internal daily-limit screen for general domains
 ├── popup/
 │   ├── popup.html         # Popup structure
 │   ├── popup.css          # Popup styling (dark theme)

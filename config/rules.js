@@ -427,6 +427,22 @@ function dfwCleanHostname(hostname) {
     .replace(/^www\./, "");
 }
 
+function dfwNormalizeTrackedDomain(hostname) {
+  const cleanHost = String(hostname || "")
+    .toLowerCase()
+    .replace(/:\d+$/, "")
+    .replace(/^(www|m|mobile)\./, "");
+  const parts = cleanHost.split(".").filter(Boolean);
+
+  if (parts.length <= 2) return cleanHost;
+
+  const tld = parts[parts.length - 1];
+  const secondLevel = parts[parts.length - 2];
+  const commonCountrySecondLevels = ["ac", "co", "com", "edu", "gov", "net", "org"];
+  const keepParts = tld.length === 2 && commonCountrySecondLevels.includes(secondLevel) ? 3 : 2;
+  return parts.slice(-keepParts).join(".");
+}
+
 function dfwHostMatches(hostname, hostPattern) {
   const cleanHost = dfwCleanHostname(hostname);
   const cleanPattern = dfwCleanHostname(hostPattern);

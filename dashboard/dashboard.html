@@ -67,22 +67,35 @@
           <span id="heatmap-caption">Last 12 weeks</span>
         </div>
         <div id="heatmap" class="heatmap" aria-label="Daily activity heatmap"></div>
+        <div class="heatmap-scale" aria-label="Heatmap intensity scale">
+          <span>Less</span>
+          <span class="scale-cell" data-level="0"></span>
+          <span class="scale-cell" data-level="1"></span>
+          <span class="scale-cell" data-level="2"></span>
+          <span class="scale-cell" data-level="3"></span>
+          <span class="scale-cell" data-level="4"></span>
+          <span>More</span>
+        </div>
       </section>
 
       <section class="panel">
         <div class="panel-header">
-          <h2>Top Sites</h2>
-          <span>Domains</span>
+          <h2>Site Limits</h2>
+          <span>Daily caps</span>
         </div>
-        <div id="top-sites-list" class="rank-list"></div>
-      </section>
-
-      <section class="panel">
-        <div class="panel-header">
-          <h2>Top Pages</h2>
-          <span>Grouped paths</span>
-        </div>
-        <div id="top-pages-list" class="rank-list"></div>
+        <form id="limit-form" class="limit-form">
+          <label class="limit-field">
+            <span>Domain</span>
+            <input id="limit-domain-input" type="text" autocomplete="off" spellcheck="false" placeholder="example.com">
+          </label>
+          <label class="limit-field">
+            <span>Minutes</span>
+            <input id="limit-minutes-input" type="number" min="0" step="1" placeholder="0 = off">
+          </label>
+          <button id="limit-save-btn" class="limit-save-btn" type="submit">Save</button>
+        </form>
+        <div id="limit-message" class="limit-message" role="status"></div>
+        <div id="limits-list" class="limits-list"></div>
       </section>
 
       <section class="panel panel-wide">

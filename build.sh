@@ -17,6 +17,7 @@ SHARED_PATHS=(
   "config"
   "dashboard"
   "icons"
+  "limit"
   "popup"
   "scripts"
   "styles"
@@ -72,12 +73,12 @@ xattr -cr "$BUILD_DIR" 2>/dev/null || true
 
 (
   cd "$CLEAN_CHROME_DIR"
-  zip -qr "$CHROME_ZIP" manifest.json build-info.json config dashboard icons popup scripts styles
+  zip -qr "$CHROME_ZIP" manifest.json build-info.json config dashboard icons limit popup scripts styles
 )
 
 (
   cd "$CLEAN_FIREFOX_DIR"
-  zip -qr "$FIREFOX_ZIP" manifest.json build-info.json config dashboard icons popup scripts styles
+  zip -qr "$FIREFOX_ZIP" manifest.json build-info.json config dashboard icons limit popup scripts styles
 )
 
 cp -X "$FIREFOX_ZIP" "$FIREFOX_XPI"

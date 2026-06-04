@@ -6,7 +6,7 @@ const COLORS = ["#38bdf8", "#22c55e", "#f59e0b", "#ef4444", "#a78bfa", "#60a5fa"
 let selectedDays = 7;
 let cachedData = {
   usageByDate: {},
-  pageUsageByDate: {}
+  limits: {}
 };
 
 function storageGet(areaName, keys) {
@@ -22,6 +22,40 @@ function storageGet(areaName, keys) {
       area.get(keys, data => resolve(data || {}));
     } catch (error) {
       resolve({});
+    }
+  });
+}
+
+function storageSet(areaName, obj) {
+  const area = api.storage && api.storage[areaName];
+  if (!area) return Promise.resolve();
+
+  if (usesPromiseApi) {
+    return area.set(obj).catch(() => {});
+  }
+
+  return new Promise((resolve) => {
+    try {
+      area.set(obj, () => resolve());
+    } catch (error) {
+      resolve();
+    }
+  });
+}
+
+function storageRemove(areaName, keys) {
+  const area = api.storage && api.storage[areaName];
+  if (!area || typeof area.remove !== "function") return Promise.resolve();
+
+  if (usesPromiseApi) {
+    return area.remove(keys).catch(() => {});
+  }
+
+  return new Promise((resolve) => {
+    try {
+      area.remove(keys, () => resolve());
+    } catch (error) {
+      resolve();
     }
   });
 }
@@ -71,33 +105,45 @@ function siteName(domain) {
   return DISTRACTION_RULES[domain] ? DISTRACTION_RULES[domain].name : domain;
 }
 
+function normalizeLimitDomain(value) {
+  const rawValue = String(value || "").trim().toLowerCase();
+  if (!rawValue) return "";
+
+  let hostname = rawValue;
+  try {
+    const url = /^[a-z][a-z0-9+.-]*:\/\//i.test(rawValue)
+      ? new URL(rawValue)
+      : new URL(`https://${rawValue}`);
+    hostname = url.hostname;
+  } catch (error) {
+    hostname = rawValue.split(/[/?#]/)[0];
+  }
+
+  hostname = hostname.replace(/:\d+$/, "").replace(/^\.+|\.+$/g, "");
+  if (!hostname) return "";
+
+  const entry = typeof dfwGetSiteEntryForHost === "function"
+    ? dfwGetSiteEntryForHost(hostname)
+    : null;
+  if (entry) return entry.domain;
+
+  if (typeof dfwNormalizeTrackedDomain === "function") {
+    return dfwNormalizeTrackedDomain(hostname);
+  }
+
+  return hostname.replace(/^(www|m|mobile)\./, "");
+}
+
+function isValidLimitDomain(domain) {
+  return /^[a-z0-9.-]+$/.test(domain) && !domain.includes("..") && (domain === "localhost" || domain.includes("."));
+}
+
 function sumDomainUsage(usageByDate, days) {
   const totals = {};
   dateRange(days).forEach(({ key }) => {
     const usage = usageByDate[key] || {};
     Object.entries(usage).forEach(([domain, seconds]) => {
       totals[domain] = (totals[domain] || 0) + Number(seconds || 0);
-    });
-  });
-  return totals;
-}
-
-function sumPageUsage(pageUsageByDate, days) {
-  const totals = {};
-  dateRange(days).forEach(({ key }) => {
-    const pages = pageUsageByDate[key] || {};
-    Object.values(pages).forEach((page) => {
-      if (!page || !page.id) return;
-      totals[page.id] = totals[page.id] || {
-        id: page.id,
-        domain: page.domain,
-        path: page.path,
-        label: page.label,
-        title: page.title,
-        seconds: 0
-      };
-      totals[page.id].seconds += Number(page.seconds || 0);
-      totals[page.id].title = page.title || totals[page.id].title;
     });
   });
   return totals;
@@ -110,12 +156,6 @@ function dayTotal(usageByDate, key) {
 function rankedEntries(map, limit = 6) {
   return Object.entries(map)
     .sort((a, b) => Number(b[1] || 0) - Number(a[1] || 0))
-    .slice(0, limit);
-}
-
-function rankedPages(map, limit = 7) {
-  return Object.values(map)
-    .sort((a, b) => Number(b.seconds || 0) - Number(a.seconds || 0))
     .slice(0, limit);
 }
 
@@ -229,49 +269,7 @@ function renderDailyBars(usageByDate, days) {
   container.appendChild(labels);
 }
 
-function renderTopSites(domainTotals) {
-  const container = document.getElementById("top-sites-list");
-  container.replaceChildren();
-
-  const entries = rankedEntries(domainTotals, 7).filter(([, seconds]) => seconds > 0);
-  if (!entries.length) {
-    container.appendChild(createElement("div", "empty", "No site usage yet."));
-    return;
-  }
-
-  entries.forEach(([domain, seconds]) => {
-    const row = createElement("div", "rank-row");
-    const text = createElement("div");
-    text.appendChild(createElement("div", "rank-title", siteName(domain)));
-    text.appendChild(createElement("div", "rank-subtitle", domain));
-    row.appendChild(text);
-    row.appendChild(createElement("div", "rank-time", formatMinutes(seconds)));
-    container.appendChild(row);
-  });
-}
-
-function renderTopPages(pageTotals) {
-  const container = document.getElementById("top-pages-list");
-  container.replaceChildren();
-
-  const entries = rankedPages(pageTotals, 7).filter(page => page.seconds > 0);
-  if (!entries.length) {
-    container.appendChild(createElement("div", "empty", "Open web pages to collect page-level insights."));
-    return;
-  }
-
-  entries.forEach((page) => {
-    const row = createElement("div", "rank-row");
-    const text = createElement("div");
-    text.appendChild(createElement("div", "rank-title", page.label || page.id));
-    text.appendChild(createElement("div", "rank-subtitle", siteName(page.domain)));
-    row.appendChild(text);
-    row.appendChild(createElement("div", "rank-time", formatMinutes(page.seconds)));
-    container.appendChild(row);
-  });
-}
-
-function renderInsights(domainTotals, pageTotals, usageByDate, days) {
+function renderInsights(domainTotals, usageByDate, days) {
   const container = document.getElementById("insights-list");
   container.replaceChildren();
 
@@ -281,7 +279,6 @@ function renderInsights(domainTotals, pageTotals, usageByDate, days) {
   const range = dateRange(days).map(({ key, date }) => ({ key, date, total: dayTotal(usageByDate, key) }));
   const activeDays = range.filter(day => day.total > 0).length;
   const bestDay = [...range].sort((a, b) => b.total - a.total)[0];
-  const pages = rankedPages(pageTotals, 1);
 
   if (ranked[0] && totalSeconds > 0) {
     const share = Math.round((ranked[0][1] / totalSeconds) * 100);
@@ -303,12 +300,8 @@ function renderInsights(domainTotals, pageTotals, usageByDate, days) {
     insights.push(`You used tracked sites on ${activeDays} of the last ${days} days.`);
   }
 
-  if (pages[0]) {
-    insights.push(`Most repeated page group: ${pages[0].label || pages[0].id} (${formatMinutes(pages[0].seconds)}).`);
-  }
-
   if (!insights.length) {
-    insights.push("No patterns yet. Browse supported sites for a bit and come back.");
+    insights.push("No patterns yet. Browse the web for a bit and come back.");
   }
 
   insights.slice(0, 5).forEach((text) => {
@@ -318,19 +311,151 @@ function renderInsights(domainTotals, pageTotals, usageByDate, days) {
 
 function renderDashboard() {
   const domainTotals = sumDomainUsage(cachedData.usageByDate, selectedDays);
-  const pageTotals = sumPageUsage(cachedData.pageUsageByDate, selectedDays);
 
   renderMetrics(domainTotals, cachedData.usageByDate, selectedDays);
   renderHeatmap(cachedData.usageByDate);
   renderPie(domainTotals);
   renderDailyBars(cachedData.usageByDate, selectedDays);
-  renderTopSites(domainTotals);
-  renderTopPages(pageTotals);
-  renderInsights(domainTotals, pageTotals, cachedData.usageByDate, selectedDays);
+  renderLimits();
+  renderInsights(domainTotals, cachedData.usageByDate, selectedDays);
 
   const totalSeconds = Object.values(domainTotals).reduce((sum, seconds) => sum + Number(seconds || 0), 0);
   const dailyAverage = Math.round(totalSeconds / Math.max(1, selectedDays));
   document.getElementById("bars-caption").textContent = `Last ${selectedDays} days • Average ${formatMinutes(dailyAverage)}/day`;
+}
+
+function setLimitMessage(text, tone = "") {
+  const message = document.getElementById("limit-message");
+  if (!message) return;
+  message.textContent = text;
+  message.dataset.tone = tone;
+}
+
+function fillLimitForm(domain, minutes) {
+  const domainInput = document.getElementById("limit-domain-input");
+  const minutesInput = document.getElementById("limit-minutes-input");
+  if (domainInput) domainInput.value = domain || "";
+  if (minutesInput) minutesInput.value = minutes ? String(minutes) : "";
+}
+
+function saveLimits(nextLimits, message) {
+  cachedData.limits = nextLimits;
+  return storageSet("local", { limits: nextLimits, dfwLimitsStoredLocally: true })
+    .then(() => storageRemove("sync", "limits"))
+    .then(() => {
+      renderLimits();
+      setLimitMessage(message, "success");
+    });
+}
+
+function saveLimitFromForm(event) {
+  event.preventDefault();
+
+  const domainInput = document.getElementById("limit-domain-input");
+  const minutesInput = document.getElementById("limit-minutes-input");
+  const domain = normalizeLimitDomain(domainInput ? domainInput.value : "");
+  const minutes = parseInt(minutesInput ? minutesInput.value : "", 10) || 0;
+
+  if (!isValidLimitDomain(domain)) {
+    setLimitMessage("Enter a valid domain.", "error");
+    return;
+  }
+
+  const nextLimits = { ...(cachedData.limits || {}) };
+  if (minutes > 0) {
+    nextLimits[domain] = minutes;
+  } else {
+    delete nextLimits[domain];
+  }
+
+  fillLimitForm(domain, minutes);
+  saveLimits(nextLimits, minutes > 0 ? `Saved ${domain}.` : `Removed ${domain}.`);
+}
+
+function renderLimits() {
+  const container = document.getElementById("limits-list");
+  if (!container) return;
+  container.replaceChildren();
+
+  const entries = Object.entries(cachedData.limits || {})
+    .filter(([, minutes]) => Number(minutes) > 0)
+    .sort((a, b) => a[0].localeCompare(b[0]));
+  const todayUsage = cachedData.usageByDate[todayKey()] || {};
+
+  if (!entries.length) {
+    container.appendChild(createElement("div", "empty", "No site limits yet."));
+    return;
+  }
+
+  entries.forEach(([domain, minutes]) => {
+    const usedSeconds = Number(todayUsage[domain] || 0);
+    const usedMinutes = Math.floor(usedSeconds / 60);
+    const pct = Math.min(100, Math.round((usedMinutes / Number(minutes)) * 100));
+    const row = createElement("div", "limit-row");
+    const text = createElement("div", "limit-row-text");
+    const actions = createElement("div", "limit-row-actions");
+    const progress = createElement("div", "limit-progress");
+    const progressBar = createElement("span", pct > 90 ? "limit-progress-bar danger" : "limit-progress-bar");
+    const editButton = createElement("button", "limit-row-btn", "Edit");
+    const removeButton = createElement("button", "limit-row-btn danger", "Remove");
+
+    text.appendChild(createElement("div", "limit-row-title", siteName(domain)));
+    text.appendChild(createElement("div", "limit-row-subtitle", `${domain} • ${formatMinutes(usedSeconds)} used today • ${minutes}m limit`));
+
+    progressBar.style.width = `${pct}%`;
+    progress.appendChild(progressBar);
+
+    editButton.type = "button";
+    editButton.addEventListener("click", () => {
+      fillLimitForm(domain, minutes);
+      setLimitMessage("", "");
+      document.getElementById("limit-minutes-input").focus();
+    });
+
+    removeButton.type = "button";
+    removeButton.addEventListener("click", () => {
+      const nextLimits = { ...(cachedData.limits || {}) };
+      delete nextLimits[domain];
+      saveLimits(nextLimits, `Removed ${domain}.`);
+    });
+
+    actions.appendChild(editButton);
+    actions.appendChild(removeButton);
+    row.appendChild(text);
+    row.appendChild(createElement("div", "limit-row-value", `${minutes}m`));
+    row.appendChild(progress);
+    row.appendChild(actions);
+    container.appendChild(row);
+  });
+}
+
+function initLimitForm() {
+  const form = document.getElementById("limit-form");
+  if (form) form.addEventListener("submit", saveLimitFromForm);
+
+  const suggestedDomain = normalizeLimitDomain(new URLSearchParams(window.location.search).get("domain"));
+  if (isValidLimitDomain(suggestedDomain)) {
+    fillLimitForm(suggestedDomain, 0);
+  }
+}
+
+function loadDashboardData() {
+  return Promise.all([
+    storageGet("local", ["usageByDate", "usageData", "limits"]),
+    storageGet("sync", ["limits"])
+  ]).then(([localData, syncData]) => {
+    const syncLimits = syncData.limits || {};
+    const localLimits = localData.limits || {};
+
+    if (Object.keys(syncLimits).length > 0) {
+      const limits = { ...syncLimits, ...localLimits };
+      return storageSet("local", { limits, dfwLimitsStoredLocally: true })
+        .then(() => storageRemove("sync", "limits"))
+        .then(() => ({ ...localData, limits }));
+    }
+
+    return localData;
+  });
 }
 
 function setRange(days) {
@@ -346,11 +471,13 @@ document.addEventListener("DOMContentLoaded", () => {
     button.addEventListener("click", () => setRange(Number(button.dataset.days)));
   });
 
-  storageGet("local", ["usageByDate", "pageUsageByDate", "usageData"]).then((data) => {
+  initLimitForm();
+
+  loadDashboardData().then((data) => {
     const today = todayKey();
     cachedData = {
       usageByDate: data.usageByDate || (data.usageData ? { [today]: data.usageData } : {}),
-      pageUsageByDate: data.pageUsageByDate || {}
+      limits: data.limits || {}
     };
     renderDashboard();
   });
