@@ -412,11 +412,24 @@ body.extension-disabled .overview-card {
   border-top: 1px solid var(--border);
 }
 
-.feature-title {
+.feature-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
   max-width: 230px;
+  min-width: 0;
+}
+
+.feature-title {
   font-size: 14px;
   font-weight: 400;
   color: var(--text);
+}
+
+.feature-description {
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 1.35;
 }
 
 /* Toggle Switch */

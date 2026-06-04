@@ -375,6 +375,19 @@ async function openLimitPage(tabId, domain, totalSeconds, limitMinutes) {
   return true;
 }
 
+async function notifyLimitReached(tabId, domain, totalSeconds, limitMinutes) {
+  if (tabId === undefined || tabId === null) return false;
+
+  const response = await apiCall(api.tabs, "sendMessage", Number(tabId), {
+    action: "LIMIT_REACHED",
+    domain,
+    usedSeconds: totalSeconds,
+    limitMinutes
+  });
+
+  return Boolean(response && response.ok);
+}
+
 async function checkLimitAndNotify(domain, knownTotalSeconds, tabId) {
   const [settingsData, limitData] = await Promise.all([
     storageGet("sync", ["settings"]),
@@ -415,15 +428,10 @@ async function checkLimitAndNotify(domain, knownTotalSeconds, tabId) {
       }
     }
 
-    Object.keys(tabsById).forEach((matchedTabId) => {
-      notifiedSupportedTabs = true;
-      apiCall(api.tabs, "sendMessage", Number(matchedTabId), {
-        action: "LIMIT_REACHED",
-        domain,
-        usedSeconds: totalSeconds,
-        limitMinutes
-      });
-    });
+    for (const matchedTabId of Object.keys(tabsById)) {
+      const wasNotified = await notifyLimitReached(matchedTabId, domain, totalSeconds, limitMinutes);
+      if (wasNotified) notifiedSupportedTabs = true;
+    }
   }
 
   if (!notifiedSupportedTabs) {

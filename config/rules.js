@@ -1,4 +1,4 @@
-const DFW_RULE_VERSION = 2;
+const DFW_RULE_VERSION = 4;
 
 const DISTRACTION_RULES = {
   "youtube.com": {
@@ -7,19 +7,26 @@ const DISTRACTION_RULES = {
     features: [
       {
         id: "yt-redirect-subs",
-        title: "Redirect Home to Subscriptions",
-        group: "Navigation",
+        title: "Start YouTube on Subscriptions",
+        description: "Only redirects the first YouTube Home page opened in this tab.",
+        group: "Startup",
         type: "redirect",
+        initialOnly: true,
         from: ["/"],
         to: "/feed/subscriptions"
       },
       {
         id: "yt-home-feed",
-        title: "Hide Home Feed",
-        group: "Feeds",
+        title: "Hide YouTube Home Feed",
+        description: "Separate from startup redirect; hides Home recommendations whenever you visit Home.",
+        group: "Home",
         selectors: [
+          'ytd-browse[page-subtype="home"] #contents',
           'ytd-browse[page-subtype="home"] ytd-rich-grid-renderer',
-          'ytd-browse[page-subtype="home"] ytd-rich-section-renderer'
+          'ytd-browse[page-subtype="home"] ytd-rich-section-renderer',
+          'ytd-browse[page-subtype="home"] ytd-two-column-browse-results-renderer',
+          'ytd-browse[page-subtype="home"] ytd-rich-grid-row',
+          'ytd-browse[page-subtype="home"] ytd-rich-grid-media'
         ]
       },
       {
@@ -31,16 +38,23 @@ const DISTRACTION_RULES = {
             'ytd-guide-entry-renderer:has(a[href^="/shorts/"])',
             'ytd-mini-guide-entry-renderer:has(a[href^="/shorts/"])',
             'ytd-guide-entry-renderer:has(a[title="Shorts"])',
+            'ytd-guide-entry-renderer:has(a[title*="Shorts" i])',
+            'ytd-mini-guide-entry-renderer:has(a[title*="Shorts" i])',
             'ytd-rich-section-renderer:has(a[href^="/shorts/"])',
+            'ytd-rich-shelf-renderer:has(a[href^="/shorts/"])',
             'ytd-reel-shelf-renderer:has(a[href^="/shorts/"])',
             'ytd-shelf-renderer:has(a[href^="/shorts/"])',
             'ytd-video-renderer:has(a[href^="/shorts/"])',
             'ytd-rich-item-renderer:has(a[href^="/shorts/"])',
+            'ytd-reel-video-renderer',
+            'ytd-browse[page-subtype="shorts"]',
             'a[href^="/shorts/"]'
           ],
           mobile: [
             'ytm-pivot-bar-item-renderer:has(a[href^="/shorts"])',
-            'ytm-reel-shelf-renderer'
+            'ytm-pivot-bar-item-renderer:has([aria-label*="Shorts" i])',
+            'ytm-reel-shelf-renderer',
+            'ytm-shorts-lockup-view-model'
           ]
         }
       },
@@ -49,9 +63,13 @@ const DISTRACTION_RULES = {
         title: "Hide Side Recommendations",
         group: "Recommendations",
         selectors: [
+          "ytd-watch-flexy #secondary",
+          "ytd-watch-flexy #secondary-inner",
           "#secondary-inner",
           "#related",
-          "ytd-watch-next-secondary-results-renderer"
+          "ytd-watch-next-secondary-results-renderer",
+          "ytd-watch-flexy ytd-watch-next-secondary-results-renderer",
+          "ytd-watch-flexy ytd-compact-video-renderer"
         ]
       },
       {
@@ -59,9 +77,11 @@ const DISTRACTION_RULES = {
         title: "Hide Comments",
         group: "Conversation",
         selectors: [
+          "ytd-watch-flexy #comments",
           "#comments",
           "ytd-comments",
-          "ytm-comment-section-renderer"
+          "ytm-comment-section-renderer",
+          "ytm-comments-entry-point-header-renderer"
         ]
       },
       {
@@ -69,10 +89,14 @@ const DISTRACTION_RULES = {
         title: "Hide End Screen Overlays",
         group: "Video Player",
         selectors: [
+          ".html5-endscreen",
           ".ytp-endscreen-content",
+          ".ytp-ce-element",
           ".ytp-ce-video",
+          ".ytp-ce-playlist",
           ".ytp-cards-teaser",
-          ".ytp-cards-button"
+          ".ytp-cards-button",
+          ".ytp-suggested-action"
         ]
       }
     ]

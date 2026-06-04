@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Distraction Free Web",
-  "version": "2.2.6",
+  "version": "2.2.8",
   "description": "Block doomscrolling, set local daily time limits, and reclaim your focus.",
   "minimum_chrome_version": "121",
   "permissions": [

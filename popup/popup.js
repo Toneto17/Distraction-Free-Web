@@ -453,6 +453,7 @@ function renderFeatureGroups(parent, features, prefs) {
 
     groupFeatures.forEach((feature) => {
       const row = createElement("div", "feature-item");
+      const featureCopy = createElement("div", "feature-copy");
       const featureTitle = createElement("span", "feature-title", feature.title);
       const switchLabel = createElement("label", "switch");
       const toggle = document.createElement("input");
@@ -469,7 +470,11 @@ function renderFeatureGroups(parent, features, prefs) {
 
       switchLabel.appendChild(toggle);
       switchLabel.appendChild(slider);
-      row.appendChild(featureTitle);
+      featureCopy.appendChild(featureTitle);
+      if (feature.description) {
+        featureCopy.appendChild(createElement("span", "feature-description", feature.description));
+      }
+      row.appendChild(featureCopy);
       row.appendChild(switchLabel);
       parent.appendChild(row);
     });
