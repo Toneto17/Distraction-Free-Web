@@ -67,6 +67,23 @@ function storageSet(areaName, obj) {
   });
 }
 
+function storageRemove(areaName, keys) {
+  const area = api.storage && api.storage[areaName];
+  if (!area || typeof area.remove !== "function") return Promise.resolve();
+
+  if (usesPromiseApi) {
+    return area.remove(keys).catch(() => {});
+  }
+
+  return new Promise((resolve) => {
+    try {
+      area.remove(keys, () => resolve());
+    } catch (error) {
+      resolve();
+    }
+  });
+}
+
 function apiCall(namespace, methodName, ...args) {
   if (!namespace || typeof namespace[methodName] !== "function") {
     return Promise.resolve(undefined);
@@ -133,6 +150,10 @@ function getDomainFromTab(tab) {
 }
 
 function normalizeTrackedDomain(hostname) {
+  if (typeof dfwNormalizeTrackedDomain === "function") {
+    return dfwNormalizeTrackedDomain(hostname);
+  }
+
   const cleanHost = String(hostname || "")
     .toLowerCase()
     .replace(/:\d+$/, "")
@@ -148,43 +169,11 @@ function normalizeTrackedDomain(hostname) {
   return parts.slice(-keepParts).join(".");
 }
 
-function getPageFromTab(tab, domain) {
-  try {
-    const url = new URL(tab.url);
-    const parts = url.pathname
-      .split("/")
-      .filter(Boolean)
-      .slice(0, 3)
-      .map(part => part.slice(0, 48));
-    const path = parts.length ? `/${parts.join("/")}` : "/";
-    const label = `${domain}${path === "/" ? "" : path}`;
-
-    return {
-      id: label,
-      domain,
-      path,
-      label,
-      title: label
-    };
-  } catch (error) {
-    return {
-      id: `${domain}/`,
-      domain,
-      path: "/",
-      label: domain,
-      title: domain
-    };
-  }
-}
-
 function getTrackingTargetFromTab(tab) {
   const domain = getDomainFromTab(tab);
   if (!domain) return null;
 
-  return {
-    domain,
-    page: getPageFromTab(tab, domain)
-  };
+  return { domain };
 }
 
 async function getActiveTab() {
@@ -224,6 +213,28 @@ async function migrateLegacyUsage() {
   });
 }
 
+async function migrateLimitsToLocal() {
+  const [syncData, localData] = await Promise.all([
+    storageGet("sync", ["limits"]),
+    storageGet("local", ["limits", "dfwLimitsStoredLocally"])
+  ]);
+  const syncLimits = syncData.limits || {};
+  const localLimits = localData.limits || {};
+
+  if (Object.keys(syncLimits).length > 0) {
+    await storageSet("local", {
+      limits: { ...syncLimits, ...localLimits },
+      dfwLimitsStoredLocally: true
+    });
+    await storageRemove("sync", "limits");
+    return;
+  }
+
+  if (!localData.dfwLimitsStoredLocally) {
+    await storageSet("local", { dfwLimitsStoredLocally: true });
+  }
+}
+
 function pruneDateMap(dataByDate) {
   const cutoff = Date.now() - USAGE_HISTORY_DAYS * 24 * 60 * 60 * 1000;
   const pruned = {};
@@ -238,19 +249,11 @@ function pruneDateMap(dataByDate) {
   return pruned;
 }
 
-async function addUsageForRange(domain, page, startMs, endMs) {
+async function addUsageForRange(domain, startMs, endMs) {
   if (!domain || !startMs || !endMs || endMs <= startMs) return 0;
 
-  const data = await storageGet("local", ["usageByDate", "pageUsageByDate"]);
+  const data = await storageGet("local", ["usageByDate"]);
   const usageByDate = data.usageByDate || {};
-  const pageUsageByDate = data.pageUsageByDate || {};
-  const pageEntry = page && page.id ? page : {
-    id: `${domain}/`,
-    domain,
-    path: "/",
-    label: domain,
-    title: domain
-  };
   let cursor = startMs;
 
   while (cursor < endMs) {
@@ -260,19 +263,6 @@ async function addUsageForRange(domain, page, startMs, endMs) {
       const dateKey = todayKey(new Date(cursor));
       usageByDate[dateKey] = usageByDate[dateKey] || {};
       usageByDate[dateKey][domain] = (usageByDate[dateKey][domain] || 0) + seconds;
-
-      pageUsageByDate[dateKey] = pageUsageByDate[dateKey] || {};
-      const currentPage = pageUsageByDate[dateKey][pageEntry.id] || {
-        id: pageEntry.id,
-        domain,
-        path: pageEntry.path,
-        label: pageEntry.label,
-        title: pageEntry.title,
-        seconds: 0
-      };
-      currentPage.seconds = (currentPage.seconds || 0) + seconds;
-      currentPage.title = pageEntry.title || currentPage.title;
-      pageUsageByDate[dateKey][pageEntry.id] = currentPage;
     }
     cursor = segmentEnd;
   }
@@ -280,7 +270,6 @@ async function addUsageForRange(domain, page, startMs, endMs) {
   const todayUsage = usageByDate[todayKey()] || {};
   await storageSet("local", {
     usageByDate: pruneDateMap(usageByDate),
-    pageUsageByDate: pruneDateMap(pageUsageByDate),
     usageData: todayUsage
   });
 
@@ -298,11 +287,11 @@ async function tickActiveSession(nowMs = Date.now()) {
   if (!state || !state.domain) return null;
 
   const startMs = Number(state.lastTickAt || state.startedAt || nowMs);
-  const totalSeconds = await addUsageForRange(state.domain, state.page, startMs, nowMs);
+  const totalSeconds = await addUsageForRange(state.domain, startMs, nowMs);
   const updatedState = { ...state, lastTickAt: nowMs };
 
   await storageSet("local", { trackingState: updatedState });
-  await checkLimitAndNotify(state.domain, totalSeconds);
+  await checkLimitAndNotify(state.domain, totalSeconds, state.tabId);
   return updatedState;
 }
 
@@ -316,9 +305,8 @@ async function setActiveTracking(target, tabId) {
   const data = await storageGet("local", ["trackingState"]);
   const state = data.trackingState;
   const domain = target ? target.domain : null;
-  const page = target ? target.page : null;
 
-  if (state && state.domain === domain && state.tabId === tabId && (!page || (state.page && state.page.id === page.id))) {
+  if (state && state.domain === domain && state.tabId === tabId) {
     return;
   }
 
@@ -334,7 +322,6 @@ async function setActiveTracking(target, tabId) {
   await storageSet("local", {
     trackingState: {
       domain,
-      page,
       tabId,
       startedAt: nowMs,
       lastTickAt: nowMs
@@ -357,11 +344,45 @@ async function getDismissedForToday() {
   return dismissedLimitsByDate[todayKey()] || {};
 }
 
-async function checkLimitAndNotify(domain, knownTotalSeconds) {
-  const settings = await storageGet("sync", ["settings", "limits"]);
-  if ((settings.settings || {}).enabled === false) return;
+function buildLimitPageUrl(domain, totalSeconds, limitMinutes) {
+  const params = new URLSearchParams({
+    domain,
+    used: String(Math.floor(totalSeconds || 0)),
+    limit: String(limitMinutes)
+  });
+  return api.runtime.getURL(`limit/limit.html?${params.toString()}`);
+}
 
-  const limits = settings.limits || {};
+function isLimitPageUrl(url) {
+  try {
+    return Boolean(url && url.startsWith(api.runtime.getURL("limit/limit.html")));
+  } catch (error) {
+    return false;
+  }
+}
+
+async function openLimitPage(tabId, domain, totalSeconds, limitMinutes) {
+  if (tabId === undefined || tabId === null) return false;
+
+  const tab = await apiCall(api.tabs, "get", tabId);
+  if (!tab || isLimitPageUrl(tab.url) || !tab.url || !tab.url.startsWith("http")) {
+    return false;
+  }
+
+  await apiCall(api.tabs, "update", tabId, {
+    url: buildLimitPageUrl(domain, totalSeconds, limitMinutes)
+  });
+  return true;
+}
+
+async function checkLimitAndNotify(domain, knownTotalSeconds, tabId) {
+  const [settingsData, limitData] = await Promise.all([
+    storageGet("sync", ["settings"]),
+    storageGet("local", ["limits"])
+  ]);
+  if ((settingsData.settings || {}).enabled === false) return;
+
+  const limits = limitData.limits || {};
   const limitMinutes = limits[domain];
   if (!limitMinutes) return;
 
@@ -376,33 +397,41 @@ async function checkLimitAndNotify(domain, knownTotalSeconds) {
   const dismissed = await getDismissedForToday();
   if (dismissed[domain]) return;
 
-  const patterns = typeof dfwGetSiteHostPatterns === "function"
-    ? dfwGetSiteHostPatterns(domain)
-    : [`*://*.${domain}/*`, `*://${domain}/*`];
-  const tabsById = {};
+  const supportedEntry = getSiteEntryForDomain(domain);
+  let notifiedSupportedTabs = false;
 
-  for (const pattern of patterns) {
-    const tabs = await apiCall(api.tabs, "query", { url: pattern });
-    if (Array.isArray(tabs)) {
-      tabs.forEach((tab) => {
-        if (tab && tab.id !== undefined) tabsById[tab.id] = tab;
-      });
+  if (supportedEntry) {
+    const patterns = typeof dfwGetSiteHostPatterns === "function"
+      ? dfwGetSiteHostPatterns(domain)
+      : [`*://*.${domain}/*`, `*://${domain}/*`];
+    const tabsById = {};
+
+    for (const pattern of patterns) {
+      const tabs = await apiCall(api.tabs, "query", { url: pattern });
+      if (Array.isArray(tabs)) {
+        tabs.forEach((tab) => {
+          if (tab && tab.id !== undefined) tabsById[tab.id] = tab;
+        });
+      }
     }
+
+    Object.keys(tabsById).forEach((matchedTabId) => {
+      notifiedSupportedTabs = true;
+      apiCall(api.tabs, "sendMessage", Number(matchedTabId), {
+        action: "LIMIT_REACHED",
+        domain,
+        usedSeconds: totalSeconds,
+        limitMinutes
+      });
+    });
   }
 
-  Object.keys(tabsById).forEach((tabId) => {
-    apiCall(api.tabs, "sendMessage", Number(tabId), {
-      action: "LIMIT_REACHED",
-      domain,
-      usedSeconds: totalSeconds,
-      limitMinutes
-    });
-  });
+  if (!notifiedSupportedTabs) {
+    await openLimitPage(tabId, domain, totalSeconds, limitMinutes);
+  }
 }
 
 async function dismissLimitForToday(domain) {
-  if (!getSiteEntryForDomain(domain)) return;
-
   const data = await storageGet("local", ["dismissedLimitsByDate"]);
   const dismissedLimitsByDate = data.dismissedLimitsByDate || {};
   const today = todayKey();
@@ -414,12 +443,12 @@ async function dismissLimitForToday(domain) {
 
 async function runDailyMaintenance() {
   await migrateLegacyUsage();
+  await migrateLimitsToLocal();
 
   const today = todayKey();
-  const data = await storageGet("local", ["currentDate", "usageByDate", "pageUsageByDate", "dismissedLimitsByDate"]);
+  const data = await storageGet("local", ["currentDate", "usageByDate", "dismissedLimitsByDate"]);
   const update = {
     usageByDate: pruneDateMap(data.usageByDate || {}),
-    pageUsageByDate: pruneDateMap(data.pageUsageByDate || {}),
     usageData: ((data.usageByDate || {})[today] || {})
   };
 
@@ -429,6 +458,7 @@ async function runDailyMaintenance() {
   }
 
   await storageSet("local", update);
+  await storageRemove("local", "pageUsageByDate");
 }
 
 function createTrackingAlarms() {
@@ -493,9 +523,12 @@ if (api.runtime.onStartup) {
   });
 }
 
-api.runtime.onMessage.addListener((message) => {
+api.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message && message.action === "DISMISS_LIMIT" && message.domain) {
-    dismissLimitForToday(message.domain);
+    dismissLimitForToday(message.domain).then(() => {
+      if (typeof sendResponse === "function") sendResponse({ ok: true });
+    });
+    return true;
   }
 
   if (message && message.action === "SET_EXTENSION_ENABLED") {

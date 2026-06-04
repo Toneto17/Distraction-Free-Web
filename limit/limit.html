@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Daily Limit Reached</title>
+  <link rel="stylesheet" href="limit.css">
+</head>
+<body>
+  <main class="limit-shell">
+    <img src="../icons/icon128.png" alt="Distraction Free Web" class="limit-icon">
+    <section class="limit-panel">
+      <p class="eyebrow">Distraction Free Web</p>
+      <h1>Daily Limit Reached</h1>
+      <p id="domain" class="domain">This site</p>
+      <div class="usage-row">
+        <span>Used today</span>
+        <strong id="used-time">0m</strong>
+      </div>
+      <div class="usage-row">
+        <span>Daily limit</span>
+        <strong id="limit-time">0m</strong>
+      </div>
+      <div class="actions">
+        <button id="skip-today-btn" class="btn-primary" type="button">Skip Limit Today</button>
+      </div>
+    </section>
+  </main>
+
+  <script src="limit.js"></script>
+</body>
+</html>

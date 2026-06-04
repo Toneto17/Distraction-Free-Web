@@ -165,6 +165,30 @@ function siteName(domain) {
   return DISTRACTION_RULES[domain] ? DISTRACTION_RULES[domain].name : domain;
 }
 
+function normalizeTrackedDomain(hostname) {
+  if (typeof dfwNormalizeTrackedDomain === "function") {
+    return dfwNormalizeTrackedDomain(hostname);
+  }
+
+  return String(hostname || "")
+    .toLowerCase()
+    .replace(/:\d+$/, "")
+    .replace(/^(www|m|mobile)\./, "");
+}
+
+function domainFromUrl(url) {
+  try {
+    if (!url || !url.startsWith("http")) return null;
+    const hostname = new URL(url).hostname;
+    const entry = typeof dfwGetSiteEntryForHost === "function"
+      ? dfwGetSiteEntryForHost(hostname)
+      : null;
+    return entry ? entry.domain : normalizeTrackedDomain(hostname);
+  } catch (error) {
+    return null;
+  }
+}
+
 document.addEventListener("DOMContentLoaded", () => {
   if (typeof DISTRACTION_RULES === "undefined") {
     const errMsg = createElement("p", "error-msg", "Failed to load rules.");
@@ -192,12 +216,12 @@ document.addEventListener("DOMContentLoaded", () => {
 
 function loadStoredData() {
   Promise.all([
-    storageGet("sync", ["preferences", "limits", "settings", "usageData"]),
-    storageGet("local", ["usageByDate", "usageData"])
+    storageGet("sync", ["preferences", "settings", "usageData"]),
+    storageGet("local", ["usageByDate", "usageData", "limits"])
   ]).then(([syncData, localData]) => {
     renderUI(
       syncData.preferences || {},
-      syncData.limits || {},
+      localData.limits || {},
       localData || {},
       syncData || {},
       syncData.settings || {}
@@ -226,9 +250,12 @@ async function reloadCurrentTab() {
   }
 }
 
-function openDashboard() {
-  const url = extApi.runtime.getURL("dashboard/dashboard.html");
-  tabsCreate({ url });
+async function openDashboard() {
+  const tabs = await tabsQuery({ active: true, currentWindow: true });
+  const domain = tabs[0] ? domainFromUrl(tabs[0].url) : null;
+  const url = new URL(extApi.runtime.getURL("dashboard/dashboard.html"));
+  if (domain) url.searchParams.set("domain", domain);
+  tabsCreate({ url: url.toString() });
 }
 
 async function toggleExtensionEnabled() {
@@ -269,7 +296,7 @@ function renderUI(prefs, limits, localData, syncData, settings = {}) {
   renderPowerState(settings);
   const usage = getTodayUsage(localData, syncData);
   renderOverview(usage, limits, localData.usageByDate || {}, settings);
-  renderSites(prefs, limits, usage);
+  renderSites(prefs);
 }
 
 function renderOverview(usage, limits, usageByDate, settings) {
@@ -367,7 +394,7 @@ function createWeekStrip(usageByDate) {
   return strip;
 }
 
-function renderSites(prefs, limits, usage) {
+function renderSites(prefs) {
   const container = document.getElementById("sites-container");
   container.innerHTML = "";
 
@@ -378,7 +405,6 @@ function renderSites(prefs, limits, usage) {
     const inner = createElement("div", "accordion-inner");
 
     renderFeatureGroups(inner, site.features || [], prefs);
-    renderLimitControls(inner, domain, limits, usage);
 
     content.appendChild(inner);
     accordion.appendChild(header);
@@ -448,71 +474,6 @@ function renderFeatureGroups(parent, features, prefs) {
       parent.appendChild(row);
     });
   });
-}
-
-function renderLimitControls(parent, domain, limits, usage) {
-  const limitVal = limits[domain] || 0;
-  const usedSec = usage[domain] || 0;
-  const usedMin = Math.floor(usedSec / 60);
-  let pct = 0;
-  let cls = "";
-
-  if (limitVal > 0) {
-    pct = Math.min((usedMin / limitVal) * 100, 100);
-    if (pct > 90) cls = "danger";
-    else if (pct > 75) cls = "warning";
-  }
-
-  parent.appendChild(createElement("div", "section-title mt-4", "Time Limit"));
-
-  const limitCard = createElement("div", "limit-section");
-  const limitInfo = createElement("div", "limit-info");
-  limitInfo.appendChild(createElement("span", "limit-time", `Used: ${formatMinutes(usedSec)}${limitVal > 0 ? ` / ${limitVal}m` : ""}`));
-  limitCard.appendChild(limitInfo);
-
-  if (limitVal > 0) {
-    const progressTrack = createElement("div", "progress-track");
-    const progressBar = createElement("div", cls ? `progress-bar ${cls}` : "progress-bar");
-    progressBar.style.width = `${pct}%`;
-    progressTrack.appendChild(progressBar);
-    limitCard.appendChild(progressTrack);
-  }
-
-  const limitControls = createElement("div", "limit-controls");
-  const input = document.createElement("input");
-  input.type = "number";
-  input.className = "limit-input";
-  input.placeholder = "0 = off (mins)";
-  input.min = "0";
-  if (limitVal) input.value = limitVal;
-
-  const saveBtn = createElement("button", "btn-save", "Save");
-  saveBtn.type = "button";
-  saveBtn.dataset.domain = domain;
-
-  saveBtn.addEventListener("click", (event) => {
-    event.stopPropagation();
-    const nextLimit = parseInt(input.value, 10) || 0;
-    if (nextLimit > 0) limits[domain] = nextLimit;
-    else delete limits[domain];
-
-    storageSet("sync", { limits }).then(() => {
-      saveBtn.textContent = "Saved";
-      saveBtn.classList.add("saved");
-      setTimeout(() => {
-        saveBtn.textContent = "Save";
-        saveBtn.classList.remove("saved");
-        loadStoredData();
-      }, 900);
-    });
-  });
-
-  input.addEventListener("click", event => event.stopPropagation());
-
-  limitControls.appendChild(input);
-  limitControls.appendChild(saveBtn);
-  limitCard.appendChild(limitControls);
-  parent.appendChild(limitCard);
 }
 
 function toggleAccordion(accordion) {

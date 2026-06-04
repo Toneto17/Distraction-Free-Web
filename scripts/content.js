@@ -84,7 +84,7 @@ function showBlockOverlay(limitMinutes, usedSeconds) {
   message.textContent = `You've used ${usedMinutes}m of the ${limitMinutes}m you set for this site today.`;
   button.id = "dfw-dismiss-btn";
   button.type = "button";
-  button.textContent = "Continue Browsing";
+  button.textContent = "Skip Limit Today";
 
   overlay.appendChild(icon);
   overlay.appendChild(title);
@@ -115,10 +115,11 @@ try {
       }
 
       Promise.all([
-        storageGet("sync", ["settings", "preferences", "limits"]),
+        storageGet("sync", ["settings", "preferences"]),
+        storageGet("local", ["limits"]),
         storageGet("local", ["usageByDate", "usageData"])
-      ]).then(([syncData, localData]) => {
-        processRules(syncData, localData);
+      ]).then(([syncData, limitData, localData]) => {
+        processRules({ ...syncData, limits: limitData.limits || {} }, localData);
       });
     }
   });
@@ -193,9 +194,10 @@ function processRules(syncData, localData) {
 
 if (siteRules) {
   Promise.all([
-    storageGet("sync", ["settings", "preferences", "limits"]),
+    storageGet("sync", ["settings", "preferences"]),
+    storageGet("local", ["limits"]),
     storageGet("local", ["usageByDate", "usageData"])
-  ]).then(([syncData, localData]) => {
-    processRules(syncData, localData);
+  ]).then(([syncData, limitData, localData]) => {
+    processRules({ ...syncData, limits: limitData.limits || {} }, localData);
   });
 }
